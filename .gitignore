@@ -24,3 +24,6 @@ vendor/
 
 # Claude Code local state
 .claude/
+
+# Local environment overrides
+.env
