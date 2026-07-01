@@ -27,3 +27,6 @@ vendor/
 
 # Local environment overrides
 .env
+
+# App logs (shipped to Loki via Promtail, not committed)
+logs/

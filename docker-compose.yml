@@ -73,9 +73,44 @@ services:
     volumes:
       - redisinsight_data:/data
 
+  loki:
+    image: grafana/loki:3.3.2
+    restart: unless-stopped
+    command: -config.file=/etc/loki/local-config.yaml
+    ports:
+      - "${LOKI_PORT:-3100}:3100"
+    volumes:
+      - loki_data:/loki
+
+  grafana:
+    image: grafana/grafana:11.5.0
+    restart: unless-stopped
+    depends_on:
+      - loki
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning
+
+  promtail:
+    image: grafana/promtail:3.3.2
+    restart: unless-stopped
+    depends_on:
+      - loki
+    volumes:
+      - ./logs:/var/log/apex:ro
+      - ./observability/promtail/promtail-config.yml:/etc/promtail/config.yml:ro
+    command: -config.file=/etc/promtail/config.yml
+
 volumes:
   postgres_data:
   redis_data:
   minio_data:
   pgadmin_data:
   redisinsight_data:
+  loki_data:
+  grafana_data:

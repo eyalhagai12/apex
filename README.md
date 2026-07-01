@@ -35,10 +35,18 @@
 | RedisInsight | http://localhost:5540 | add a connection to host `redis`, port `6379`, password `apex` |
 | MinIO API | `localhost:9000` | `apex` / `apex123456` |
 | MinIO Console | http://localhost:9001 | `apex` / `apex123456` |
+| Loki | `localhost:3100` | — |
+| Grafana | http://localhost:3000 | anonymous access (Admin role) |
 
 In pgAdmin, add the Postgres server using host `postgres` (the Compose service name), not `localhost`.
 
+Grafana is pre-provisioned with Loki as a datasource — open http://localhost:3000/explore to query logs (e.g. `{app="apex"}`).
+
 Ports and credentials can be overridden via `.env` — see `.env.example` for the full list of variables.
+
+## Logging
+
+The app logs JSON via `log/slog`, wired up in `logging.New` (`logging/logger.go`). Logs are written to stdout and to `logs/apex.log`. Promtail (in `docker-compose.yml`) tails `logs/apex.log` and ships entries to Loki — the app never talks to Loki directly.
 
 ## Stopping
 

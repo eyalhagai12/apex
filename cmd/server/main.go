@@ -1,7 +1,15 @@
 package main
 
-import "fmt"
+import (
+	"log/slog"
+
+	"apex/logging"
+)
 
 func main() {
-	fmt.Println("Hello, apex!")
+	logger, closeLogger := logging.New("logs")
+	defer closeLogger()
+	slog.SetDefault(logger)
+
+	logger.Info("apex starting")
 }
