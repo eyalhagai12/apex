@@ -6,6 +6,7 @@ import (
 	"apex/marketdata/providers"
 	"context"
 	"database/sql"
+	"time"
 )
 
 /*
@@ -39,6 +40,21 @@ func (m *Module) Subscribe(ctx context.Context, symbol, tf string) error {
 	})
 	if err != nil {
 		return err
+	}
+
+	return nil
+}
+
+func (m *Module) Backfill(ctx context.Context, symbol, tf string, start, end time.Time) error {
+	bars, err := m.provider.GetBackfillBars(ctx, symbol, tf, start, end)
+	if err != nil {
+		return err
+	}
+
+	for _, bar := range bars {
+		if err := m.barStorage.Store(ctx, bar); err != nil {
+			return err
+		}
 	}
 
 	return nil

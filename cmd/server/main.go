@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"apex/marketdata"
 
@@ -48,6 +49,14 @@ func main() {
 	}
 
 	const symbol, tf = "AAPL", "1Min"
+
+	end := time.Now()
+	start := end.AddDate(0, 0, -5)
+	if err := module.Backfill(ctx, symbol, tf, start, end); err != nil {
+		log.Fatalf("backfill %s: %v", symbol, err)
+	}
+	log.Printf("backfilled %s %s bars from %s to %s", symbol, tf, start.Format(time.RFC3339), end.Format(time.RFC3339))
+
 	if err := module.Subscribe(ctx, symbol, tf); err != nil {
 		log.Fatalf("subscribe to %s: %v", symbol, err)
 	}
