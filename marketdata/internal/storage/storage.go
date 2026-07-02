@@ -6,17 +6,17 @@ import (
 	"database/sql"
 )
 
-type BarRepository struct {
+type MarketDataRepository struct {
 	db *sql.DB
 }
 
-func NewRepo(db *sql.DB) *BarRepository {
-	return &BarRepository{
+func NewRepo(db *sql.DB) *MarketDataRepository {
+	return &MarketDataRepository{
 		db: db,
 	}
 }
 
-func (br *BarRepository) Store(ctx context.Context, bar domain.Bar) error {
+func (br *MarketDataRepository) StoreBar(ctx context.Context, bar domain.Bar) error {
 	_, err := br.db.ExecContext(
 		ctx,
 		`INSERT INTO bars (time, symbol, timeframe, high, open, low, close, volume)
@@ -43,7 +43,7 @@ func (br *BarRepository) Store(ctx context.Context, bar domain.Bar) error {
 	return nil
 }
 
-func (br *BarRepository) List(ctx context.Context, symbol, tf string) ([]domain.Bar, error) {
+func (br *MarketDataRepository) List(ctx context.Context, symbol, tf string) ([]domain.Bar, error) {
 	bars := make([]domain.Bar, 0)
 	query, err := br.db.QueryContext(ctx, "SELECT * FROM bars WHERE symbol = $1 AND timeframe = $2", symbol, tf)
 	if err != nil {
@@ -61,4 +61,29 @@ func (br *BarRepository) List(ctx context.Context, symbol, tf string) ([]domain.
 	}
 
 	return bars, nil
+}
+
+func (mdr *MarketDataRepository) TrackSymbol(ctx context.Context, symbol string) error {
+	row := mdr.db.QueryRowContext(ctx, "SELET id, name FROM symbols WHERE name = $1", symbol)
+
+	var s string
+	if err := row.Scan(&s); err == nil {
+		return nil
+	}
+
+	_, err := mdr.db.ExecContext(ctx, "INSERT INTO symbols (name) VALUES ($1)", symbol)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (mdr *MarketDataRepository) UntrackSymbol(ctx context.Context, symbol string) error {
+	_, err := mdr.db.ExecContext(ctx, "DELETE FROM symbols WHERE name = $1", symbol)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }

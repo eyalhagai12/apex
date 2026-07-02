@@ -13,12 +13,14 @@ import (
  * this file defines the public api of the marketdata package
  */
 
-type BarStorage interface {
-	Store(context.Context, domain.Bar) error
+type MarketDataStorage interface {
+	StoreBar(context.Context, domain.Bar) error
+	TrackSymbol(context.Context, string) error
+	UntrackSymbol(context.Context, string) error
 }
 
 type Module struct {
-	barStorage BarStorage
+	barStorage MarketDataStorage
 	provider   providers.Provider
 }
 
@@ -36,13 +38,17 @@ func New(ctx context.Context, db *sql.DB, key, secret string) (*Module, error) {
 
 func (m *Module) Subscribe(ctx context.Context, symbol, tf string) error {
 	err := m.provider.Subscribe(ctx, symbol, tf, func(bar domain.Bar) error {
-		return m.barStorage.Store(ctx, bar)
+		return m.barStorage.StoreBar(ctx, bar)
 	})
 	if err != nil {
 		return err
 	}
 
 	return nil
+}
+
+func (m *Module) Unsubscribe(ctx context.Context, symbol, tf string) error {
+	return m.provider.Unsubscribe(ctx, symbol, tf)
 }
 
 func (m *Module) Backfill(ctx context.Context, symbol, tf string, start, end time.Time) error {
@@ -52,7 +58,7 @@ func (m *Module) Backfill(ctx context.Context, symbol, tf string, start, end tim
 	}
 
 	for _, bar := range bars {
-		if err := m.barStorage.Store(ctx, bar); err != nil {
+		if err := m.barStorage.StoreBar(ctx, bar); err != nil {
 			return err
 		}
 	}

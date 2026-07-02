@@ -42,6 +42,10 @@ func (ap *AlpacaProvider) Subscribe(ctx context.Context, symbol string, tf strin
 	}, symbol)
 }
 
+func (ap *AlpacaProvider) Unsubscribe(ctx context.Context, symbol string, tf string) error {
+	return ap.client.UnsubscribeFromBars(symbol)
+}
+
 func (ap *AlpacaProvider) GetBackfillBars(ctx context.Context, symbol string, tf string, start, end time.Time) ([]domain.Bar, error) {
 	bars, err := ap.historical.GetBars(symbol, marketdata.GetBarsRequest{
 		TimeFrame: ap.parseTimeFrame(tf),
