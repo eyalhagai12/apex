@@ -5,15 +5,19 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"apex/internal/logging"
 	"apex/marketdata"
+	mdhandlers "apex/marketdata/handlers"
 
-	"github.com/joho/godotenv"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/joho/godotenv"
 )
 
 func main() {
@@ -21,47 +25,70 @@ func main() {
 		log.Fatalf("loading .env: %v", err)
 	}
 
+	logger, cleanup, err := logging.New()
+	if err != nil {
+		log.Fatalf("init logger: %v", err)
+	}
+	defer cleanup()
+
 	apcaKeyID := os.Getenv("APCA_API_KEY_ID")
 	apcaSecretKey := os.Getenv("APCA_API_SECRET_KEY")
 	if apcaKeyID == "" || apcaSecretKey == "" {
-		log.Fatal("APCA_API_KEY_ID and APCA_API_SECRET_KEY must be set (see .env.example)")
+		logger.Error("APCA_API_KEY_ID and APCA_API_SECRET_KEY must be set (see .env.example)")
+		os.Exit(1)
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
 	dsn := fmt.Sprintf("postgres://%s:%s@localhost:%s/%s?sslmode=disable",
-		os.Getenv("POSTGRES_USER"), os.Getenv("POSTGRES_PASSWORD"), os.Getenv("POSTGRES_PORT"), os.Getenv("POSTGRES_DB"))
+		os.Getenv("POSTGRES_USER"), os.Getenv("POSTGRES_PASSWORD"),
+		os.Getenv("POSTGRES_PORT"), os.Getenv("POSTGRES_DB"))
 
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
-		log.Fatalf("open db: %v", err)
+		logger.Error("open db", slog.Any("error", err))
+		os.Exit(1)
 	}
 	defer db.Close()
 
 	if err := db.PingContext(ctx); err != nil {
-		log.Fatalf("ping db: %v", err)
+		logger.Error("ping db", slog.Any("error", err))
+		os.Exit(1)
 	}
+	logger.Info("database connected")
 
-	module, err := marketdata.New(ctx, db, apcaKeyID, apcaSecretKey)
+	mkdata, err := marketdata.New(ctx, db, apcaKeyID, apcaSecretKey)
 	if err != nil {
-		log.Fatalf("init marketdata module: %v", err)
+		logger.Error("init marketdata module", slog.Any("error", err))
+		os.Exit(1)
+	}
+	logger.Info("marketdata module ready")
+
+	mux := http.NewServeMux()
+	mdhandlers.Mount(mux, mkdata)
+
+	addr := os.Getenv("SERVER_ADDR")
+	if addr == "" {
+		addr = ":8080"
 	}
 
-	const symbol, tf = "AAPL", "1Min"
+	srv := &http.Server{Addr: addr, Handler: mux}
 
-	end := time.Now()
-	start := end.AddDate(0, 0, -5)
-	if err := module.Backfill(ctx, symbol, tf, start, end); err != nil {
-		log.Fatalf("backfill %s: %v", symbol, err)
-	}
-	log.Printf("backfilled %s %s bars from %s to %s", symbol, tf, start.Format(time.RFC3339), end.Format(time.RFC3339))
+	go func() {
+		logger.Info("server starting", slog.String("addr", addr))
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Error("server error", slog.Any("error", err))
+			cancel()
+		}
+	}()
 
-	if err := module.Subscribe(ctx, symbol, tf); err != nil {
-		log.Fatalf("subscribe to %s: %v", symbol, err)
-	}
-
-	log.Printf("subscribed to %s %s bars, writing to the bars table — ctrl+c to stop", symbol, tf)
 	<-ctx.Done()
-	log.Println("shutting down")
+	logger.Info("shutting down")
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		logger.Error("shutdown error", slog.Any("error", err))
+	}
 }

@@ -2,8 +2,8 @@ package marketdata
 
 import (
 	"apex/internal/domain"
+	"apex/marketdata/internal/providers"
 	"apex/marketdata/internal/storage"
-	"apex/marketdata/providers"
 	"context"
 	"database/sql"
 	"time"
@@ -13,14 +13,14 @@ import (
  * this file defines the public api of the marketdata package
  */
 
-type MarketDataStorage interface {
+type marketDataStorage interface {
 	StoreBar(context.Context, domain.Bar) error
 	TrackSymbol(context.Context, string) error
 	UntrackSymbol(context.Context, string) error
 }
 
 type Module struct {
-	barStorage MarketDataStorage
+	barStorage marketDataStorage
 	provider   providers.Provider
 }
 
