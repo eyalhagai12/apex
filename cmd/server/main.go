@@ -66,7 +66,7 @@ func main() {
 	logger.Info("marketdata module ready")
 
 	mux := http.NewServeMux()
-	mdhandlers.Mount(mux, mkdata)
+	mdhandlers.Mount(mux, logger, mkdata)
 
 	addr := os.Getenv("SERVER_ADDR")
 	if addr == "" {
