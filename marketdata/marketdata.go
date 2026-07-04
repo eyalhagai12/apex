@@ -2,6 +2,7 @@ package marketdata
 
 import (
 	"apex/internal/domain"
+	"apex/internal/metrics"
 	"apex/marketdata/internal/providers"
 	"apex/marketdata/internal/storage"
 	"context"
@@ -38,7 +39,11 @@ func New(ctx context.Context, db *sql.DB, key, secret string) (*Module, error) {
 
 func (m *Module) Subscribe(ctx context.Context, symbol, tf string) error {
 	err := m.provider.Subscribe(ctx, symbol, tf, func(bar domain.Bar) error {
-		return m.barStorage.StoreBar(ctx, bar)
+		if err := m.barStorage.StoreBar(ctx, bar); err != nil {
+			return err
+		}
+		metrics.BarsStreamed.WithLabelValues(symbol, tf).Inc()
+		return nil
 	})
 	if err != nil {
 		return err
@@ -61,6 +66,7 @@ func (m *Module) Backfill(ctx context.Context, symbol, tf string, start, end tim
 		if err := m.barStorage.StoreBar(ctx, bar); err != nil {
 			return err
 		}
+		metrics.BarsBackfilled.WithLabelValues(symbol, tf).Inc()
 	}
 
 	return nil

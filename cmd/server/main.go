@@ -18,6 +18,7 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/joho/godotenv"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 func main() {
@@ -67,6 +68,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	mdhandlers.Mount(mux, logger, mkdata)
+	mux.Handle("/metrics", promhttp.Handler())
 
 	addr := os.Getenv("SERVER_ADDR")
 	if addr == "" {

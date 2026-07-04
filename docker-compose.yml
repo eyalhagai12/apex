@@ -82,11 +82,21 @@ services:
     volumes:
       - loki_data:/loki
 
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    restart: unless-stopped
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+
   grafana:
     image: grafana/grafana:11.5.0
     restart: unless-stopped
     depends_on:
       - loki
+      - prometheus
     environment:
       GF_AUTH_ANONYMOUS_ENABLED: "true"
       GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
@@ -114,3 +124,4 @@ volumes:
   redisinsight_data:
   loki_data:
   grafana_data:
+  prometheus_data:
