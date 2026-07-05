@@ -53,7 +53,7 @@ type BackfillResponse struct {
 
 func (h *Handlers) Backfill(w http.ResponseWriter, r *http.Request, req BackfillRequest) (BackfillResponse, int, error) {
 	h.log.Info("backfill request", "symbol", req.Symbol, "timeframe", req.TimeFrame, "start_time", req.StartTime, "end_time", req.EndTime)
-	if err := h.mkdata.Backfill(r.Context(), req.Symbol, req.TimeFrame, req.EndTime, req.EndTime); err != nil {
+	if err := h.mkdata.Backfill(r.Context(), req.Symbol, req.TimeFrame, req.StartTime, req.EndTime); err != nil {
 		return BackfillResponse{}, http.StatusInternalServerError, err
 	}
 

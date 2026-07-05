@@ -59,7 +59,7 @@ func main() {
 	}
 	logger.Info("database connected")
 
-	mkdata, err := marketdata.New(ctx, db, apcaKeyID, apcaSecretKey)
+	mkdata, err := marketdata.New(ctx, db, logger, apcaKeyID, apcaSecretKey)
 	if err != nil {
 		logger.Error("init marketdata module", slog.Any("error", err))
 		os.Exit(1)
