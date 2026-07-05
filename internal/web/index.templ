@@ -1,0 +1,10 @@
+package web
+
+templ Index() {
+	@Layout("Apex") {
+		<h1>Apex</h1>
+		<div hx-ext="sse" sse-connect="/web/events" sse-swap="message">
+			waiting for events...
+		</div>
+	}
+}

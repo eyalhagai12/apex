@@ -13,8 +13,9 @@ import (
 	"time"
 
 	"apex/internal/logging"
-	"apex/marketdata"
-	mdhandlers "apex/marketdata/handlers"
+	"apex/internal/web"
+	// "apex/marketdata"
+	// mdhandlers "apex/marketdata/handlers"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/joho/godotenv"
@@ -59,15 +60,16 @@ func main() {
 	}
 	logger.Info("database connected")
 
-	mkdata, err := marketdata.New(ctx, db, logger, apcaKeyID, apcaSecretKey)
-	if err != nil {
-		logger.Error("init marketdata module", slog.Any("error", err))
-		os.Exit(1)
-	}
+	// mkdata, err := marketdata.New(ctx, db, logger, apcaKeyID, apcaSecretKey)
+	// if err != nil {
+	// 	logger.Error("init marketdata module", slog.Any("error", err))
+	// 	os.Exit(1)
+	// }
 	logger.Info("marketdata module ready")
 
 	mux := http.NewServeMux()
-	mdhandlers.Mount(mux, logger, mkdata)
+	// mdhandlers.Mount(mux, logger, mkdata)
+	web.Mount(mux, logger)
 	mux.Handle("/metrics", promhttp.Handler())
 
 	addr := os.Getenv("SERVER_ADDR")
