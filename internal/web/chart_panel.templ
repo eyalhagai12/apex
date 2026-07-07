@@ -1,0 +1,12 @@
+package web
+
+templ ChartPanel(symbol string, tf string) {
+	<div class="card chart-panel" id={ "chart-panel-" + symbol + "-" + tf } data-symbol={ symbol } data-timeframe={ tf }>
+		<div class="card__title">{ symbol } · { tf }</div>
+		<div class="chart-container"></div>
+	</div>
+}
+
+templ SubscribeError(message string) {
+	<div class="alert alert--danger">{ message }</div>
+}

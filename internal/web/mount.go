@@ -1,41 +1,264 @@
 package web
 
 import (
+	"apex/internal/domain"
+	"apex/internal/httputil"
+	"apex/marketdata"
+	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
+	"sync"
 	"time"
 )
 
-func Mount(mux *http.ServeMux, log *slog.Logger) {
+var validTimeframes = map[string]bool{"1Min": true, "5min": true}
+
+type subKey struct {
+	symbol string
+	tf     string
+}
+
+type sseEvent struct {
+	name string
+	data []byte
+}
+
+type backfillEvent struct {
+	Bars int    `json:"bars"`
+	Err  string `json:"error,omitempty"`
+}
+
+// liveSub tracks one active symbol/timeframe subscription and fans its live
+// bars and backfill-completion event out to any number of SSE listeners.
+type liveSub struct {
+	key    subKey
+	cancel context.CancelFunc
+
+	mu               sync.Mutex
+	listeners        map[int]chan sseEvent
+	nextID           int
+	backfilled       bool
+	lastBackfillBars int
+	lastBackfillErr  string
+}
+
+func (s *liveSub) addListener() (int, chan sseEvent) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id := s.nextID
+	s.nextID++
+	ch := make(chan sseEvent, 16)
+	s.listeners[id] = ch
+	return id, ch
+}
+
+func (s *liveSub) removeListener(id int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.listeners, id)
+}
+
+func (s *liveSub) snapshotBackfill() (bool, int, string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.backfilled, s.lastBackfillBars, s.lastBackfillErr
+}
+
+func (s *liveSub) markBackfilled(bars int, errStr string) {
+	s.mu.Lock()
+	s.backfilled = true
+	s.lastBackfillBars = bars
+	s.lastBackfillErr = errStr
+	s.mu.Unlock()
+}
+
+func (s *liveSub) broadcast(name string, data []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, ch := range s.listeners {
+		select {
+		case ch <- sseEvent{name: name, data: data}:
+		default:
+		}
+	}
+}
+
+// dashboard holds the set of active symbol/timeframe subscriptions backing
+// the web dashboard. Subscriptions are keyed by (symbol, timeframe) and
+// persist for the server's lifetime once started (subscribing to the same
+// key twice reuses the existing subscription).
+type dashboard struct {
+	mkdata *marketdata.Module
+	log    *slog.Logger
+	ctx    context.Context // server-lifetime base context, not any single request's
+
+	mu   sync.Mutex
+	subs map[subKey]*liveSub
+}
+
+func Mount(mux *http.ServeMux, log *slog.Logger, mkdata *marketdata.Module, baseCtx context.Context) {
+	mux.Handle("GET /static/", http.FileServerFS(staticFS))
+
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		if err := Index().Render(r.Context(), w); err != nil {
 			log.Error("render index", slog.Any("error", err))
 		}
 	})
 
-	mux.HandleFunc("GET /web/events", func(w http.ResponseWriter, r *http.Request) {
-		flusher, ok := w.(http.Flusher)
-		if !ok {
-			http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+	d := &dashboard{mkdata: mkdata, log: log, ctx: baseCtx, subs: make(map[subKey]*liveSub)}
+	mux.HandleFunc("POST /web/subscribe", d.handleSubscribe)
+	mux.HandleFunc("GET /web/events", d.handleEvents)
+	mux.HandleFunc("GET /web/bars", d.handleBars)
+}
+
+// getOrCreate returns the existing subscription for symbol/tf if one is
+// already active, otherwise starts a new one: live streaming immediately,
+// plus an async one-year backfill in the background.
+func (d *dashboard) getOrCreate(symbol, tf string) (*liveSub, error) {
+	key := subKey{symbol: symbol, tf: tf}
+
+	d.mu.Lock()
+	if sub, ok := d.subs[key]; ok {
+		d.mu.Unlock()
+		return sub, nil
+	}
+	d.mu.Unlock()
+
+	subCtx, cancel := context.WithCancel(d.ctx)
+	sub := &liveSub{key: key, cancel: cancel, listeners: make(map[int]chan sseEvent)}
+
+	if err := d.mkdata.Subscribe(subCtx, symbol, tf, func(bar domain.Bar) {
+		data, err := json.Marshal(toChartBar(bar))
+		if err != nil {
 			return
 		}
+		sub.broadcast("bar", data)
+	}); err != nil {
+		cancel()
+		return nil, err
+	}
 
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("Connection", "keep-alive")
+	d.mu.Lock()
+	d.subs[key] = sub
+	d.mu.Unlock()
 
-		ticker := time.NewTicker(2 * time.Second)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-r.Context().Done():
-				return
-			case t := <-ticker.C:
-				fmt.Fprintf(w, "data: server time is %s\n\n", t.Format(time.RFC3339))
-				flusher.Flush()
-			}
+	end := time.Now()
+	start := end.AddDate(-1, 0, 0)
+	d.mkdata.Backfill(subCtx, symbol, tf, start, end, func(res marketdata.BackfillResult) {
+		errStr := ""
+		if res.Err != nil {
+			errStr = res.Err.Error()
 		}
+		sub.markBackfilled(res.NumBars, errStr)
+		data, err := json.Marshal(backfillEvent{Bars: res.NumBars, Err: errStr})
+		if err != nil {
+			return
+		}
+		sub.broadcast("backfill_complete", data)
 	})
+
+	return sub, nil
+}
+
+func (d *dashboard) handleSubscribe(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		if renderErr := SubscribeError("invalid form data").Render(r.Context(), w); renderErr != nil {
+			d.log.Error("render subscribe error", slog.Any("error", renderErr))
+		}
+		return
+	}
+
+	symbol := strings.ToUpper(strings.TrimSpace(r.FormValue("symbol")))
+	tf := r.FormValue("timeframe")
+
+	if symbol == "" {
+		if err := SubscribeError("symbol is required").Render(r.Context(), w); err != nil {
+			d.log.Error("render subscribe error", slog.Any("error", err))
+		}
+		return
+	}
+	if !validTimeframes[tf] {
+		if err := SubscribeError("timeframe must be 1Min or 5min").Render(r.Context(), w); err != nil {
+			d.log.Error("render subscribe error", slog.Any("error", err))
+		}
+		return
+	}
+
+	if _, err := d.getOrCreate(symbol, tf); err != nil {
+		d.log.Error("subscribe", slog.String("symbol", symbol), slog.String("tf", tf), slog.Any("error", err))
+		if renderErr := SubscribeError(fmt.Sprintf("failed to subscribe to %s: %v", symbol, err)).Render(r.Context(), w); renderErr != nil {
+			d.log.Error("render subscribe error", slog.Any("error", renderErr))
+		}
+		return
+	}
+
+	if err := ChartPanel(symbol, tf).Render(r.Context(), w); err != nil {
+		d.log.Error("render chart panel", slog.Any("error", err))
+	}
+}
+
+func (d *dashboard) handleEvents(w http.ResponseWriter, r *http.Request) {
+	symbol := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("symbol")))
+	tf := r.URL.Query().Get("timeframe")
+
+	d.mu.Lock()
+	sub, ok := d.subs[subKey{symbol: symbol, tf: tf}]
+	d.mu.Unlock()
+	if !ok {
+		http.Error(w, "not subscribed", http.StatusNotFound)
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	id, ch := sub.addListener()
+	defer sub.removeListener(id)
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	if backfilled, bars, errStr := sub.snapshotBackfill(); backfilled {
+		if data, err := json.Marshal(backfillEvent{Bars: bars, Err: errStr}); err == nil {
+			fmt.Fprintf(w, "event: backfill_complete\ndata: %s\n\n", data)
+			flusher.Flush()
+		}
+	}
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case ev := <-ch:
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.name, ev.data)
+			flusher.Flush()
+		}
+	}
+}
+
+func (d *dashboard) handleBars(w http.ResponseWriter, r *http.Request) {
+	symbol := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("symbol")))
+	tf := r.URL.Query().Get("timeframe")
+
+	bars, err := d.mkdata.ListBars(r.Context(), symbol, tf)
+	if err != nil {
+		d.log.Error("list bars", slog.String("symbol", symbol), slog.String("tf", tf), slog.Any("error", err))
+		http.Error(w, "failed to load bars", http.StatusInternalServerError)
+		return
+	}
+
+	out := make([]chartBar, 0, len(bars))
+	for _, b := range bars {
+		out = append(out, toChartBar(b))
+	}
+	if err := httputil.WriteJSON(w, out, http.StatusOK); err != nil {
+		d.log.Error("write bars response", slog.Any("error", err))
+	}
 }

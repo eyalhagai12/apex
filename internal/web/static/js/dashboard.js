@@ -1,0 +1,115 @@
+(function () {
+  var CHART_HEIGHT = 480;
+
+  function themeColor(name, fallback) {
+    var v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return v || fallback;
+  }
+
+  function hydrate(panel) {
+    var symbol = panel.dataset.symbol;
+    var tf = panel.dataset.timeframe;
+    return fetch('/web/bars?symbol=' + encodeURIComponent(symbol) + '&timeframe=' + encodeURIComponent(tf))
+      .then(function (res) { return res.ok ? res.json() : []; })
+      .then(function (bars) {
+        panel._series.setData(bars);
+        panel._chart.timeScale().fitContent();
+      });
+  }
+
+  function connectEvents(panel) {
+    var symbol = panel.dataset.symbol;
+    var tf = panel.dataset.timeframe;
+    var es = new EventSource('/web/events?symbol=' + encodeURIComponent(symbol) + '&timeframe=' + encodeURIComponent(tf));
+    es.addEventListener('bar', function (evt) {
+      panel._series.update(JSON.parse(evt.data));
+    });
+    es.addEventListener('backfill_complete', function () {
+      hydrate(panel);
+    });
+    panel._eventSource = es;
+  }
+
+  function initChart(panel) {
+    var container = panel.querySelector('.chart-container');
+    if (!container) {
+      return;
+    }
+
+    var chart = LightweightCharts.createChart(container, {
+      width: container.clientWidth,
+      height: CHART_HEIGHT,
+      layout: {
+        background: { color: themeColor('--color-surface', '#ffffff') },
+        textColor: themeColor('--color-text', '#212529'),
+      },
+      grid: {
+        vertLines: { color: themeColor('--color-border', '#e9ecef') },
+        horzLines: { color: themeColor('--color-border', '#e9ecef') },
+      },
+      timeScale: { timeVisible: true, secondsVisible: false },
+    });
+
+    var series = chart.addCandlestickSeries({
+      upColor: themeColor('--color-green-600', '#16a34a'),
+      downColor: themeColor('--color-red-600', '#dc2626'),
+      borderVisible: false,
+      wickUpColor: themeColor('--color-green-600', '#16a34a'),
+      wickDownColor: themeColor('--color-red-600', '#dc2626'),
+    });
+
+    panel._chart = chart;
+    panel._series = series;
+
+    var resizeObserver = new ResizeObserver(function (entries) {
+      entries.forEach(function (entry) {
+        chart.applyOptions({ width: entry.contentRect.width });
+      });
+    });
+    resizeObserver.observe(container);
+    panel._resizeObserver = resizeObserver;
+
+    hydrate(panel).then(function () {
+      connectEvents(panel);
+    });
+  }
+
+  function findNewPanel(node) {
+    if (!node || !node.matches) {
+      return null;
+    }
+    if (node.matches('.chart-panel[data-symbol]')) {
+      return node;
+    }
+    if (node.querySelector) {
+      return node.querySelector('.chart-panel[data-symbol]');
+    }
+    return null;
+  }
+
+  document.body.addEventListener('htmx:load', function (evt) {
+    var panel = findNewPanel(evt.detail.elt);
+    if (!panel || panel._chartInitialized) {
+      return;
+    }
+    panel._chartInitialized = true;
+    initChart(panel);
+  });
+
+  document.addEventListener('DOMContentLoaded', function () {
+    var form = document.getElementById('subscribe-form');
+    if (!form) {
+      return;
+    }
+    form.addEventListener('submit', function (evt) {
+      var symbol = form.symbol.value.trim().toUpperCase();
+      var tf = form.timeframe.value;
+      var existing = document.getElementById('chart-panel-' + symbol + '-' + tf);
+      if (existing) {
+        evt.preventDefault();
+        evt.stopPropagation();
+        existing.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    });
+  });
+})();
