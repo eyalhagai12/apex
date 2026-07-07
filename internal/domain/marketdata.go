@@ -28,6 +28,11 @@ func NewBar(time time.Time, symbol, tf string, h, o, l, c float64, v uint64) Bar
 	}
 }
 
+type Subscription struct {
+	Symbol    string
+	Timeframe string
+}
+
 type Stream struct {
 	tf     string
 	symbol string

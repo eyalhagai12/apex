@@ -74,26 +74,27 @@
     });
   }
 
-  function findNewPanel(node) {
-    if (!node || !node.matches) {
-      return null;
+  function findNewPanels(node) {
+    if (!node) {
+      return [];
     }
-    if (node.matches('.chart-panel[data-symbol]')) {
-      return node;
+    if (node.matches && node.matches('.chart-panel[data-symbol]')) {
+      return [node];
     }
-    if (node.querySelector) {
-      return node.querySelector('.chart-panel[data-symbol]');
+    if (node.querySelectorAll) {
+      return Array.prototype.slice.call(node.querySelectorAll('.chart-panel[data-symbol]'));
     }
-    return null;
+    return [];
   }
 
   document.body.addEventListener('htmx:load', function (evt) {
-    var panel = findNewPanel(evt.detail.elt);
-    if (!panel || panel._chartInitialized) {
-      return;
-    }
-    panel._chartInitialized = true;
-    initChart(panel);
+    findNewPanels(evt.detail.elt).forEach(function (panel) {
+      if (panel._chartInitialized) {
+        return;
+      }
+      panel._chartInitialized = true;
+      initChart(panel);
+    });
   });
 
   document.addEventListener('DOMContentLoaded', function () {

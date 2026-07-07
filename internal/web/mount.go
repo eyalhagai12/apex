@@ -6,13 +6,20 @@ import (
 	"apex/marketdata"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 )
+
+// errAlreadySubscribed is returned by getOrCreate when symbol/tf is already
+// active. It is not a failure - handleSubscribe turns it into a 409 so the
+// client's fetch/htmx swap is a no-op and no duplicate panel is added.
+var errAlreadySubscribed = errors.New("already subscribed")
 
 var validTimeframes = map[string]bool{"1Min": true, "5min": true}
 
@@ -87,9 +94,9 @@ func (s *liveSub) broadcast(name string, data []byte) {
 }
 
 // dashboard holds the set of active symbol/timeframe subscriptions backing
-// the web dashboard. Subscriptions are keyed by (symbol, timeframe) and
-// persist for the server's lifetime once started (subscribing to the same
-// key twice reuses the existing subscription).
+// the web dashboard. Subscriptions are keyed by (symbol, timeframe), persisted
+// to the database, and restored on startup (subscribing to an already-active
+// key is rejected with errAlreadySubscribed instead of creating a duplicate).
 type dashboard struct {
 	mkdata *marketdata.Module
 	log    *slog.Logger
@@ -102,31 +109,38 @@ type dashboard struct {
 func Mount(mux *http.ServeMux, log *slog.Logger, mkdata *marketdata.Module, baseCtx context.Context) {
 	mux.Handle("GET /static/", http.FileServerFS(staticFS))
 
+	d := &dashboard{mkdata: mkdata, log: log, ctx: baseCtx, subs: make(map[subKey]*liveSub)}
+	d.restoreSubscriptions()
+
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		if err := Index().Render(r.Context(), w); err != nil {
+		d.mu.Lock()
+		active := make([]subKey, 0, len(d.subs))
+		for k := range d.subs {
+			active = append(active, k)
+		}
+		d.mu.Unlock()
+		sort.Slice(active, func(i, j int) bool {
+			if active[i].symbol != active[j].symbol {
+				return active[i].symbol < active[j].symbol
+			}
+			return active[i].tf < active[j].tf
+		})
+		if err := Index(active).Render(r.Context(), w); err != nil {
 			log.Error("render index", slog.Any("error", err))
 		}
 	})
 
-	d := &dashboard{mkdata: mkdata, log: log, ctx: baseCtx, subs: make(map[subKey]*liveSub)}
 	mux.HandleFunc("POST /web/subscribe", d.handleSubscribe)
 	mux.HandleFunc("GET /web/events", d.handleEvents)
 	mux.HandleFunc("GET /web/bars", d.handleBars)
 }
 
-// getOrCreate returns the existing subscription for symbol/tf if one is
-// already active, otherwise starts a new one: live streaming immediately,
-// plus an async one-year backfill in the background.
-func (d *dashboard) getOrCreate(symbol, tf string) (*liveSub, error) {
+// startLiveSubscription starts live streaming for symbol/tf and registers it
+// in d.subs. It does not touch backfill or persistence beyond what
+// Module.Subscribe already does - callers decide whether a backfill is
+// needed (a brand-new subscription) or not (restoring one from the DB).
+func (d *dashboard) startLiveSubscription(symbol, tf string) (*liveSub, context.Context, error) {
 	key := subKey{symbol: symbol, tf: tf}
-
-	d.mu.Lock()
-	if sub, ok := d.subs[key]; ok {
-		d.mu.Unlock()
-		return sub, nil
-	}
-	d.mu.Unlock()
-
 	subCtx, cancel := context.WithCancel(d.ctx)
 	sub := &liveSub{key: key, cancel: cancel, listeners: make(map[int]chan sseEvent)}
 
@@ -138,12 +152,57 @@ func (d *dashboard) getOrCreate(symbol, tf string) (*liveSub, error) {
 		sub.broadcast("bar", data)
 	}); err != nil {
 		cancel()
-		return nil, err
+		return nil, nil, err
 	}
 
 	d.mu.Lock()
 	d.subs[key] = sub
 	d.mu.Unlock()
+
+	return sub, subCtx, nil
+}
+
+// restoreSubscriptions re-establishes live streaming for every subscription
+// persisted in the database, without re-running a backfill (historical data
+// was already seeded the first time each symbol/tf was subscribed). It runs
+// once, synchronously, before Mount registers any HTTP handlers, so d.subs
+// is fully populated before the server can receive traffic.
+func (d *dashboard) restoreSubscriptions() {
+	subs, err := d.mkdata.ListSubscriptions(d.ctx)
+	if err != nil {
+		d.log.Error("list persisted subscriptions", slog.Any("error", err))
+		return
+	}
+
+	for _, s := range subs {
+		sub, _, err := d.startLiveSubscription(s.Symbol, s.Timeframe)
+		if err != nil {
+			d.log.Error("restore subscription", slog.String("symbol", s.Symbol), slog.String("tf", s.Timeframe), slog.Any("error", err))
+			continue
+		}
+		sub.markBackfilled(0, "")
+		d.log.Info("restored subscription", slog.String("symbol", s.Symbol), slog.String("tf", s.Timeframe))
+	}
+}
+
+// getOrCreate starts a new subscription for symbol/tf: live streaming
+// immediately, plus an async one-year backfill in the background. If
+// symbol/tf is already subscribed, it returns errAlreadySubscribed instead of
+// touching the existing subscription.
+func (d *dashboard) getOrCreate(symbol, tf string) (*liveSub, error) {
+	key := subKey{symbol: symbol, tf: tf}
+
+	d.mu.Lock()
+	if _, ok := d.subs[key]; ok {
+		d.mu.Unlock()
+		return nil, errAlreadySubscribed
+	}
+	d.mu.Unlock()
+
+	sub, subCtx, err := d.startLiveSubscription(symbol, tf)
+	if err != nil {
+		return nil, err
+	}
 
 	end := time.Now()
 	start := end.AddDate(-1, 0, 0)
@@ -188,6 +247,13 @@ func (d *dashboard) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, err := d.getOrCreate(symbol, tf); err != nil {
+		if errors.Is(err, errAlreadySubscribed) {
+			// Non-2xx: htmx's default swap only applies to successful
+			// responses, so this is a no-op on the client - no duplicate
+			// panel is added.
+			http.Error(w, "already subscribed", http.StatusConflict)
+			return
+		}
 		d.log.Error("subscribe", slog.String("symbol", symbol), slog.String("tf", tf), slog.Any("error", err))
 		if renderErr := SubscribeError(fmt.Sprintf("failed to subscribe to %s: %v", symbol, err)).Render(r.Context(), w); renderErr != nil {
 			d.log.Error("render subscribe error", slog.Any("error", renderErr))

@@ -24,6 +24,9 @@ type marketDataStorage interface {
 	List(context.Context, string, string) ([]domain.Bar, error)
 	TrackSymbol(context.Context, string) error
 	UntrackSymbol(context.Context, string) error
+	SaveSubscription(context.Context, string, string) error
+	DeleteSubscription(context.Context, string, string) error
+	ListSubscriptions(context.Context) ([]domain.Subscription, error)
 }
 
 type Module struct {
@@ -51,8 +54,14 @@ func New(ctx context.Context, db *sql.DB, log *slog.Logger, key, secret string) 
 // Subscribe starts streaming live bars for symbol/tf, storing each to the DB.
 // If onBar is non-nil, it is also invoked for every live bar received (e.g.
 // so the web layer can fan bars out over SSE, or a future strategy consumer
-// can attach to the same stream).
+// can attach to the same stream). The subscription is persisted before the
+// live provider subscription is started, so a failed persist never leaves a
+// live-but-unpersisted subscription behind.
 func (m *Module) Subscribe(ctx context.Context, symbol, tf string, onBar func(domain.Bar)) error {
+	if err := m.barStorage.SaveSubscription(ctx, symbol, tf); err != nil {
+		return err
+	}
+
 	return m.provider.Subscribe(ctx, symbol, tf, func(bar domain.Bar) error {
 		if err := m.barStorage.StoreBar(ctx, bar); err != nil {
 			return err
@@ -66,7 +75,16 @@ func (m *Module) Subscribe(ctx context.Context, symbol, tf string, onBar func(do
 }
 
 func (m *Module) Unsubscribe(ctx context.Context, symbol, tf string) error {
-	return m.provider.Unsubscribe(ctx, symbol, tf)
+	if err := m.provider.Unsubscribe(ctx, symbol, tf); err != nil {
+		return err
+	}
+	return m.barStorage.DeleteSubscription(ctx, symbol, tf)
+}
+
+// ListSubscriptions returns every symbol/timeframe pair currently persisted
+// as subscribed, e.g. to resume live streaming for each after a restart.
+func (m *Module) ListSubscriptions(ctx context.Context) ([]domain.Subscription, error) {
+	return m.barStorage.ListSubscriptions(ctx)
 }
 
 // BackfillResult describes the outcome of an async Backfill call.

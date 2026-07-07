@@ -8,7 +8,7 @@ package web
 import "github.com/a-h/templ"
 import templruntime "github.com/a-h/templ/runtime"
 
-func Index() templ.Component {
+func Index(active []subKey) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
 		if templ_7745c5c3_CtxErr := ctx.Err(); templ_7745c5c3_CtxErr != nil {
@@ -41,7 +41,17 @@ func Index() templ.Component {
 				}()
 			}
 			ctx = templ.InitializeContext(ctx)
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div class=\"container container--lg\"><h1>Apex</h1><form id=\"subscribe-form\" class=\"toolbar\" hx-post=\"/web/subscribe\" hx-target=\"#charts\" hx-swap=\"beforeend\"><div class=\"field\"><label for=\"symbol\">Symbol</label> <input class=\"input\" type=\"text\" id=\"symbol\" name=\"symbol\" placeholder=\"AAPL\" maxlength=\"10\" autocomplete=\"off\" required></div><div class=\"field\"><label for=\"timeframe\">Timeframe</label> <select class=\"select\" id=\"timeframe\" name=\"timeframe\"><option value=\"1Min\">1 Minute</option> <option value=\"5min\">5 Minutes</option></select></div><button class=\"btn btn--primary\" type=\"submit\">Subscribe</button></form><div id=\"charts\" class=\"charts-grid\"></div></div>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div class=\"container container--lg\"><h1>Apex</h1><form id=\"subscribe-form\" class=\"toolbar\" hx-post=\"/web/subscribe\" hx-target=\"#charts\" hx-swap=\"beforeend\"><div class=\"field\"><label for=\"symbol\">Symbol</label> <input class=\"input\" type=\"text\" id=\"symbol\" name=\"symbol\" placeholder=\"AAPL\" maxlength=\"10\" autocomplete=\"off\" required></div><div class=\"field\"><label for=\"timeframe\">Timeframe</label> <select class=\"select\" id=\"timeframe\" name=\"timeframe\"><option value=\"1Min\">1 Minute</option> <option value=\"5min\">5 Minutes</option></select></div><button class=\"btn btn--primary\" type=\"submit\">Subscribe</button></form><div id=\"charts\" class=\"charts-grid\">")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			for _, s := range active {
+				templ_7745c5c3_Err = ChartPanel(s.symbol, s.tf).Render(ctx, templ_7745c5c3_Buffer)
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "</div></div>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}

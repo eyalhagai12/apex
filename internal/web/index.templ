@@ -1,6 +1,6 @@
 package web
 
-templ Index() {
+templ Index(active []subKey) {
 	@Layout("Apex") {
 		<div class="container container--lg">
 			<h1>Apex</h1>
@@ -18,7 +18,11 @@ templ Index() {
 				</div>
 				<button class="btn btn--primary" type="submit">Subscribe</button>
 			</form>
-			<div id="charts" class="charts-grid"></div>
+			<div id="charts" class="charts-grid">
+				for _, s := range active {
+					@ChartPanel(s.symbol, s.tf)
+				}
+			</div>
 		</div>
 	}
 }

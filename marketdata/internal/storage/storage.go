@@ -115,6 +115,40 @@ func (br *MarketDataRepository) storeBarsChunk(ctx context.Context, chunk []doma
 	return err
 }
 
+func (br *MarketDataRepository) SaveSubscription(ctx context.Context, symbol, tf string) error {
+	_, err := br.db.ExecContext(ctx,
+		`INSERT INTO subscriptions (symbol, timeframe) VALUES ($1, $2)
+		 ON CONFLICT (symbol, timeframe) DO NOTHING`,
+		symbol, tf)
+	return err
+}
+
+func (br *MarketDataRepository) DeleteSubscription(ctx context.Context, symbol, tf string) error {
+	_, err := br.db.ExecContext(ctx,
+		`DELETE FROM subscriptions WHERE symbol = $1 AND timeframe = $2`,
+		symbol, tf)
+	return err
+}
+
+func (br *MarketDataRepository) ListSubscriptions(ctx context.Context) ([]domain.Subscription, error) {
+	subs := make([]domain.Subscription, 0)
+	rows, err := br.db.QueryContext(ctx,
+		`SELECT symbol, timeframe FROM subscriptions ORDER BY symbol, timeframe`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var s domain.Subscription
+		if err := rows.Scan(&s.Symbol, &s.Timeframe); err != nil {
+			return nil, err
+		}
+		subs = append(subs, s)
+	}
+	return subs, rows.Err()
+}
+
 func (mdr *MarketDataRepository) TrackSymbol(ctx context.Context, symbol string) error {
 	row := mdr.db.QueryRowContext(ctx, "SELET id, name FROM symbols WHERE name = $1", symbol)
 
