@@ -21,7 +21,7 @@ import (
 // client's fetch/htmx swap is a no-op and no duplicate panel is added.
 var errAlreadySubscribed = errors.New("already subscribed")
 
-var validTimeframes = map[string]bool{"1Min": true, "5min": true}
+var validTimeframes = map[string]bool{"1Min": true, "5Min": true}
 
 type subKey struct {
 	symbol string
@@ -276,7 +276,7 @@ func (d *dashboard) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !validTimeframes[tf] {
-		if err := SubscribeError("timeframe must be 1Min or 5min").Render(r.Context(), w); err != nil {
+		if err := SubscribeError("timeframe must be 1Min or 5Min").Render(r.Context(), w); err != nil {
 			d.log.Error("render subscribe error", slog.Any("error", err))
 		}
 		return

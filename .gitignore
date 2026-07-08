@@ -30,3 +30,7 @@ vendor/
 
 # App logs (shipped to Loki via Promtail, not committed)
 logs/
+
+# Air hot-reload build output
+tmp/
+build-errors.log

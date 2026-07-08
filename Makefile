@@ -5,10 +5,16 @@ POSTGRES_PORT ?= 5432
 
 DB_DSN := postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@localhost:$(POSTGRES_PORT)/$(POSTGRES_DB)?sslmode=disable
 
-.PHONY: run setup teardown migrate-up migrate-down migrate-create
+.PHONY: run dev templ setup teardown migrate-up migrate-down migrate-create
 
 run:
 	go run ./cmd/server
+
+dev:
+	go tool air
+
+templ:
+	go tool templ generate
 
 setup:
 	docker compose up -d

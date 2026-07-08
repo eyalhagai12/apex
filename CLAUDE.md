@@ -58,4 +58,4 @@ Apex is a market data ingestion service. It connects to Alpaca's IEX feed, backf
 
 **Observability:** JSON logs via `log/slog` written to stdout and `logs/apex.log`. Promtail tails the log file and ships to Loki. Grafana is pre-provisioned at `localhost:3000` with Loki as a datasource (query with `{app="apex"}`).
 
-**Timeframe strings** passed to the provider use Alpaca's format (`"1Min"`, `"5min"`) — `parseTimeFrame` maps these to SDK constants; anything unrecognized falls back to 1-Day bars.
+**Timeframe strings** passed to the provider use Alpaca's format (`"1Min"`, `"5Min"`) — `parseTimeFrame` maps these to SDK constants; anything unrecognized falls back to 1-Day bars.
