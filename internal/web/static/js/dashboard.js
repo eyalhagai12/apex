@@ -6,15 +6,69 @@
     return v || fallback;
   }
 
+  function showSpinner(panel) {
+    var container = panel.querySelector('.chart-container');
+    if (!container || container.querySelector('.spinner-overlay')) {
+      return;
+    }
+    var overlay = document.createElement('div');
+    overlay.className = 'spinner-overlay';
+    var spinner = document.createElement('div');
+    spinner.className = 'spinner';
+    overlay.appendChild(spinner);
+    container.appendChild(overlay);
+  }
+
+  function hideSpinner(panel) {
+    var container = panel.querySelector('.chart-container');
+    var overlay = container && container.querySelector('.spinner-overlay');
+    if (overlay) {
+      overlay.remove();
+    }
+  }
+
   function hydrate(panel) {
     var symbol = panel.dataset.symbol;
     var tf = panel.dataset.timeframe;
+    showSpinner(panel);
     return fetch('/web/bars?symbol=' + encodeURIComponent(symbol) + '&timeframe=' + encodeURIComponent(tf))
       .then(function (res) { return res.ok ? res.json() : []; })
       .then(function (bars) {
         panel._series.setData(bars);
         panel._chart.timeScale().fitContent();
+      })
+      .finally(function () {
+        hideSpinner(panel);
       });
+  }
+
+  function teardownPanel(panel, message) {
+    if (panel._eventSource) {
+      panel._eventSource.close();
+    }
+    if (panel._resizeObserver) {
+      panel._resizeObserver.disconnect();
+    }
+
+    var alert = document.createElement('div');
+    alert.className = 'alert alert--danger';
+    alert.textContent = panel.dataset.symbol + ' ' + panel.dataset.timeframe + ': ' + message + ' ';
+
+    var dismiss = document.createElement('button');
+    dismiss.type = 'button';
+    dismiss.className = 'btn';
+    dismiss.textContent = 'Dismiss';
+    dismiss.addEventListener('click', function () {
+      panel.remove();
+    });
+    alert.appendChild(dismiss);
+
+    var container = panel.querySelector('.chart-container');
+    if (container) {
+      container.replaceWith(alert);
+    } else {
+      panel.appendChild(alert);
+    }
   }
 
   function connectEvents(panel) {
@@ -24,7 +78,17 @@
     es.addEventListener('bar', function (evt) {
       panel._series.update(JSON.parse(evt.data));
     });
-    es.addEventListener('backfill_complete', function () {
+    es.addEventListener('backfill_complete', function (evt) {
+      var payload = {};
+      try {
+        payload = JSON.parse(evt.data);
+      } catch (e) {
+        payload = {};
+      }
+      if (payload.error) {
+        teardownPanel(panel, payload.error);
+        return;
+      }
       hydrate(panel);
     });
     panel._eventSource = es;

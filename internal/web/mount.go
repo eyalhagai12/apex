@@ -162,11 +162,33 @@ func (d *dashboard) startLiveSubscription(symbol, tf string) (*liveSub, context.
 	return sub, subCtx, nil
 }
 
+// teardown removes symbol/tf from d.subs and unsubscribes it - used when a
+// subscription turns out to be for a symbol with no data (bad ticker or
+// genuinely empty range), so it doesn't linger as a dead live subscription or
+// get restored again on the next restart. Unsubscribe runs on d.ctx, not
+// sub's own subCtx, since sub.cancel() (called last) would otherwise make
+// that context dead before Unsubscribe's DB/provider calls complete.
+func (d *dashboard) teardown(symbol, tf string, sub *liveSub) {
+	key := subKey{symbol: symbol, tf: tf}
+	d.mu.Lock()
+	delete(d.subs, key)
+	d.mu.Unlock()
+
+	if err := d.mkdata.Unsubscribe(d.ctx, symbol, tf); err != nil {
+		d.log.Error("teardown unsubscribe", slog.String("symbol", symbol), slog.String("tf", tf), slog.Any("error", err))
+	}
+	sub.cancel()
+}
+
 // restoreSubscriptions re-establishes live streaming for every subscription
 // persisted in the database, without re-running a backfill (historical data
 // was already seeded the first time each symbol/tf was subscribed). It runs
 // once, synchronously, before Mount registers any HTTP handlers, so d.subs
 // is fully populated before the server can receive traffic.
+//
+// Persisted subscriptions with no stored bars (a stale row from a bad symbol
+// subscribed before dead subscriptions were torn down) are skipped and
+// cleaned up here instead of being restored, so they never reappear.
 func (d *dashboard) restoreSubscriptions() {
 	subs, err := d.mkdata.ListSubscriptions(d.ctx)
 	if err != nil {
@@ -175,13 +197,26 @@ func (d *dashboard) restoreSubscriptions() {
 	}
 
 	for _, s := range subs {
+		bars, err := d.mkdata.ListBars(d.ctx, s.Symbol, s.Timeframe)
+		if err != nil {
+			d.log.Error("check stored bars for restore", slog.String("symbol", s.Symbol), slog.String("tf", s.Timeframe), slog.Any("error", err))
+			continue
+		}
+		if len(bars) == 0 {
+			d.log.Warn("skipping restore, no stored bars", slog.String("symbol", s.Symbol), slog.String("tf", s.Timeframe))
+			if err := d.mkdata.Unsubscribe(d.ctx, s.Symbol, s.Timeframe); err != nil {
+				d.log.Error("cleanup stale subscription", slog.String("symbol", s.Symbol), slog.String("tf", s.Timeframe), slog.Any("error", err))
+			}
+			continue
+		}
+
 		sub, _, err := d.startLiveSubscription(s.Symbol, s.Timeframe)
 		if err != nil {
 			d.log.Error("restore subscription", slog.String("symbol", s.Symbol), slog.String("tf", s.Timeframe), slog.Any("error", err))
 			continue
 		}
-		sub.markBackfilled(0, "")
-		d.log.Info("restored subscription", slog.String("symbol", s.Symbol), slog.String("tf", s.Timeframe))
+		sub.markBackfilled(len(bars), "")
+		d.log.Info("restored subscription", slog.String("symbol", s.Symbol), slog.String("tf", s.Timeframe), slog.Int("n_bars", len(bars)))
 	}
 }
 
@@ -212,11 +247,12 @@ func (d *dashboard) getOrCreate(symbol, tf string) (*liveSub, error) {
 			errStr = res.Err.Error()
 		}
 		sub.markBackfilled(res.NumBars, errStr)
-		data, err := json.Marshal(backfillEvent{Bars: res.NumBars, Err: errStr})
-		if err != nil {
-			return
+		if data, err := json.Marshal(backfillEvent{Bars: res.NumBars, Err: errStr}); err == nil {
+			sub.broadcast("backfill_complete", data)
 		}
-		sub.broadcast("backfill_complete", data)
+		if res.Err != nil {
+			d.teardown(symbol, tf, sub)
+		}
 	})
 
 	return sub, nil
