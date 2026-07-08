@@ -62,6 +62,8 @@ func (m *Module) Subscribe(ctx context.Context, symbol, tf string, onBar func(do
 		return err
 	}
 
+	metrics.BarsStreamed.WithLabelValues(symbol, tf) // see comment in Backfill
+
 	return m.provider.Subscribe(ctx, symbol, tf, func(bar domain.Bar) error {
 		if err := m.barStorage.StoreBar(ctx, bar); err != nil {
 			return err
@@ -101,6 +103,13 @@ type BackfillResult struct {
 // outcome, since the returned error only reflects whether the goroutine was
 // launched, not whether it succeeded.
 func (m *Module) Backfill(ctx context.Context, symbol, tf string, start, end time.Time, onComplete func(BackfillResult)) error {
+	// Touch the series now, before the async work below, so Prometheus can
+	// scrape it at 0 first. A CounterVec label combination doesn't exist
+	// until WithLabelValues is called - if that first call happened only
+	// after Add() below, the series would appear already at its final
+	// value and increase()/rate() would never see it rise.
+	metrics.BarsBackfilled.WithLabelValues(symbol, tf)
+
 	m.errgp.Go(func() error {
 		bars, err := m.provider.GetBackfillBars(ctx, symbol, tf, start, end)
 		if err != nil {

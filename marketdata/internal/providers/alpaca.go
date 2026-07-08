@@ -111,7 +111,7 @@ func (ap *AlpacaProvider) GetBackfillBars(ctx context.Context, symbol string, tf
 
 func (ap *AlpacaProvider) parseTimeFrame(tf string) marketdata.TimeFrame {
 	switch tf {
-	case "1Min":
+	case "1min":
 		return marketdata.NewTimeFrame(1, marketdata.Min)
 	case "5min":
 		return marketdata.NewTimeFrame(5, marketdata.Min)

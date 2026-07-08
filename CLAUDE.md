@@ -41,12 +41,12 @@ Apex is a market data ingestion service. It connects to Alpaca's IEX feed, backf
 
 - `cmd/server/` — entrypoint: loads `.env`, wires the DB and marketdata module, runs backfill + subscribe then blocks until signal
 - `internal/domain/` — shared types (`Bar`, `Stream`); no external dependencies
-- `internal/httputil/` — generic `Wrap[Req, Res]` helper that decodes JSON bodies and encodes responses; `WriteJSON`/`WriteError` utilities
+- `internal/httputil/` — generic `Wrap[Req, Res]` helper that decodes JSON bodies and encodes responses; `WriteJSON`/`WriteError` utilities; `LogRoutes` middleware logs every request (method, path, status, duration)
 - `internal/logging/` — placeholder for `log/slog` setup (currently empty)
+- `internal/web/` — templ + htmx dashboard: subscribe form, SSE live bar streaming, TradingView chart panels; mounted at `/`, `/web/*`, `/static/*`
 - `marketdata/` — public module API (`Module.Subscribe`, `Module.Unsubscribe`, `Module.Backfill`); depends on `providers.Provider` interface and `MarketDataStorage` interface — both are swappable
 - `marketdata/providers/` — `Provider` interface + `AlpacaProvider` implementation (real-time via `stream.StocksClient`, historical via `marketdata.Client`, both IEX feed)
 - `marketdata/internal/storage/` — `MarketDataRepository` backed by `database/sql`; upserts bars on conflict
-- `marketdata/internal/handlers/` — HTTP handlers (`SubscribeToSymbol`) wired to `marketdata.Module`; not yet registered on a router
 - `migrations/` — goose SQL migrations; goose is a Go tool dependency (`go tool goose ...`), no separate install needed
 
 **Data flow:**
@@ -54,7 +54,7 @@ Apex is a market data ingestion service. It connects to Alpaca's IEX feed, backf
 2. `Module.Backfill` fetches historical bars via REST and upserts each into `bars`
 3. `Module.Subscribe` registers a callback on the WebSocket stream; each incoming bar is upserted via `StoreBar`
 
-**HTTP layer (wiring pending):** `httputil.Wrap` is a generic adapter — handlers declare typed `(w, r, Req) → (Res, status, error)` signatures and `Wrap` handles decode/encode/error. The marketdata handlers exist but are not yet mounted on any router.
+**HTTP layer:** the only mounted routes today are the `internal/web` htmx dashboard and `/metrics`. A JSON REST API for `marketdata.Module` (subscribe/unsubscribe/backfill) was removed for now and will be reintroduced later; `httputil.Wrap` is a generic adapter — handlers declare typed `(w, r, Req) → (Res, status, error)` signatures and `Wrap` handles decode/encode/error — kept in place for that. Every request is logged by `httputil.LogRoutes`, wrapping the whole mux in `cmd/server/main.go`.
 
 **Observability:** JSON logs via `log/slog` written to stdout and `logs/apex.log`. Promtail tails the log file and ships to Loki. Grafana is pre-provisioned at `localhost:3000` with Loki as a datasource (query with `{app="apex"}`).
 

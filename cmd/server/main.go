@@ -12,10 +12,10 @@ import (
 	"syscall"
 	"time"
 
+	"apex/internal/httputil"
 	"apex/internal/logging"
 	"apex/internal/web"
 	"apex/marketdata"
-	mdhandlers "apex/marketdata/handlers"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/joho/godotenv"
@@ -27,11 +27,17 @@ func main() {
 		log.Fatalf("loading .env: %v", err)
 	}
 
-	logger, cleanup, err := logging.New()
+	baseLogger, cleanup, err := logging.New()
 	if err != nil {
 		log.Fatalf("init logger: %v", err)
 	}
 	defer cleanup()
+
+	// logger is used everywhere except the request-logging middleware, so
+	// every business-level log line is automatically labeled type=domain,
+	// distinguishing it from type=request lines emitted per HTTP call.
+	logger := baseLogger.With(slog.String("type", "domain"))
+	requestLogger := baseLogger.With(slog.String("type", "request"))
 
 	apcaKeyID := os.Getenv("APCA_API_KEY_ID")
 	apcaSecretKey := os.Getenv("APCA_API_SECRET_KEY")
@@ -68,7 +74,6 @@ func main() {
 	logger.Info("marketdata module ready")
 
 	mux := http.NewServeMux()
-	mdhandlers.Mount(mux, logger, mkdata)
 	web.Mount(mux, logger, mkdata, ctx)
 	mux.Handle("/metrics", promhttp.Handler())
 
@@ -77,7 +82,7 @@ func main() {
 		addr = ":8080"
 	}
 
-	srv := &http.Server{Addr: addr, Handler: mux}
+	srv := &http.Server{Addr: addr, Handler: httputil.LogRoutes(requestLogger, mux)}
 
 	go func() {
 		logger.Info("server starting", slog.String("addr", addr))
