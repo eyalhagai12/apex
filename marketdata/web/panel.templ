@@ -1,0 +1,25 @@
+package web
+
+import "apex/internal/domain"
+
+templ Panel(active []domain.Subscription) {
+	<form id="subscribe-form" class="toolbar" hx-post="/web/subscribe" hx-target="#charts" hx-swap="beforeend">
+		<div class="field">
+			<label for="symbol">Symbol</label>
+			<input class="input" type="text" id="symbol" name="symbol" placeholder="AAPL" maxlength="10" autocomplete="off" required/>
+		</div>
+		<div class="field">
+			<label for="timeframe">Timeframe</label>
+			<select class="select" id="timeframe" name="timeframe">
+				<option value="1Min">1 Minute</option>
+				<option value="5Min">5 Minutes</option>
+			</select>
+		</div>
+		<button class="btn btn--primary" type="submit">Subscribe</button>
+	</form>
+	<div id="charts" class="charts-grid">
+		for _, s := range active {
+			@ChartPanel(s.Symbol, s.Timeframe)
+		}
+	</div>
+}

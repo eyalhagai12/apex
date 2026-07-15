@@ -20,6 +20,11 @@
   max-width: var(--container-xl);
 }
 
+.flex {
+  display: flex;
+  gap: var(--space-lg);
+}
+
 .btn {
   display: inline-flex;
   align-items: center;
@@ -182,4 +187,34 @@
   background-color: var(--color-red-50);
   color: var(--color-red-700);
   border-color: var(--color-red-500);
+}
+
+.section {
+  margin-block-end: var(--space-xl);
+}
+
+.strategies-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: var(--space-lg);
+}
+
+.strategy-row .card__body {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.badge {
+  display: inline-flex;
+  padding: var(--space-1) var(--space-sm);
+  border-radius: var(--radius-full);
+  background-color: var(--color-bg-subtle);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+}
+
+.muted {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
 }

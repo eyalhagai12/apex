@@ -1,0 +1,39 @@
+package web
+
+import (
+	"apex/internal/domain"
+	"strconv"
+)
+
+templ Panel(strategies []*domain.Strategy) {
+	<form id="create-strategy-form" class="toolbar" hx-post="/web/strategies" hx-target="#strategies-list" hx-swap="beforeend">
+		<div class="field">
+			<label for="name">Name</label>
+			<input class="input" type="text" id="name" name="name" placeholder="my-strategy" maxlength="100" autocomplete="off" required/>
+		</div>
+		<div class="field">
+			<label for="file">Name</label>
+			<input class="input" type="file" id="file" name="file" placeholder="strategy.py" required/>
+		</div>
+		<button class="btn btn--primary" type="submit">Create Strategy</button>
+	</form>
+	<div id="strategies-list" class="strategies-list">
+		for _, s := range strategies {
+			@Row(s)
+		}
+	</div>
+}
+
+templ Row(s *domain.Strategy) {
+	<div class="card strategy-row" id={ "strategy-row-" + s.ID.String() }>
+		<div class="card__title">{ s.Name }</div>
+		<div class="card__body">
+			<span class="badge">{ string(s.Status) }</span>
+			<span class="muted">v{ strconv.FormatUint(s.Version, 10) }</span>
+		</div>
+	</div>
+}
+
+templ CreateError(message string) {
+	<div class="alert alert--danger">{ message }</div>
+}

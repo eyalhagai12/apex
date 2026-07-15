@@ -12,10 +12,14 @@ import (
 	"syscall"
 	"time"
 
+	"apex/internal/dashboard"
 	"apex/internal/httputil"
 	"apex/internal/logging"
 	"apex/internal/web"
 	"apex/marketdata"
+	mdweb "apex/marketdata/web"
+	"apex/strategy"
+	stratweb "apex/strategy/web"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/joho/godotenv"
@@ -73,8 +77,18 @@ func main() {
 	}
 	logger.Info("marketdata module ready")
 
+	stratSvc, err := strategy.New(db, logger)
+	if err != nil {
+		logger.Error("init strategy module", slog.Any("error", err))
+		os.Exit(1)
+	}
+	logger.Info("strategy module ready")
+
 	mux := http.NewServeMux()
-	web.Mount(mux, logger, mkdata, ctx)
+	web.Mount(mux)
+	mdDash := mdweb.Mount(mux, logger, mkdata, ctx)
+	stratweb.Mount(mux, logger, stratSvc)
+	dashboard.Mount(mux, logger, mdDash, stratSvc)
 	mux.Handle("/metrics", promhttp.Handler())
 
 	addr := os.Getenv("SERVER_ADDR")
