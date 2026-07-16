@@ -34,3 +34,7 @@ logs/
 # Air hot-reload build output
 tmp/
 build-errors.log
+
+# Tailwind CLI binary and generated CSS (regenerated via `make css`)
+tools/
+internal/web/static/css/app.css

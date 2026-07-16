@@ -3,21 +3,22 @@ package web
 import (
 	"apex/internal/domain"
 	"strconv"
+	"fmt"
 )
 
 templ Panel(strategies []*domain.Strategy) {
-	<form id="create-strategy-form" class="toolbar" hx-post="/web/strategies" hx-target="#strategies-list" hx-swap="beforeend">
-		<div class="field">
-			<label for="name">Name</label>
-			<input class="input" type="text" id="name" name="name" placeholder="my-strategy" maxlength="100" autocomplete="off" required/>
+	<form id="create-strategy-form" class="flex items-end gap-4 flex-wrap my-6" hx-post="/web/strategies" hx-target="#strategies-list" hx-swap="beforeend" hx-encoding="multipart/form-data">
+		<div class="flex flex-col gap-1">
+			<label class="text-sm font-medium text-text-muted" for="name">Name</label>
+			<input class="px-4 py-2 border border-border rounded-md bg-surface text-text text-sm placeholder:text-text-muted focus:outline-none focus:border-primary focus:ring-2 focus:ring-focus-ring transition-colors" type="text" id="name" name="name" placeholder="my-strategy" maxlength="100" autocomplete="off" required/>
 		</div>
-		<div class="field">
-			<label for="file">Name</label>
-			<input class="input" type="file" id="file" name="file" placeholder="strategy.py" required/>
+		<div class="flex flex-col gap-1">
+			<label class="text-sm font-medium text-text-muted" for="file">File</label>
+			<input class="px-4 py-2 border border-border rounded-md bg-surface text-text text-sm placeholder:text-text-muted focus:outline-none focus:border-primary focus:ring-2 focus:ring-focus-ring transition-colors" type="file" id="file" name="file" placeholder="strategy.py" required/>
 		</div>
-		<button class="btn btn--primary" type="submit">Create Strategy</button>
+		<button class="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-md text-sm font-medium leading-none whitespace-nowrap bg-primary text-primary-text hover:bg-primary-hover disabled:opacity-60 disabled:cursor-not-allowed transition-colors" type="submit">Create Strategy</button>
 	</form>
-	<div id="strategies-list" class="strategies-list">
+	<div id="strategies-list" class="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-6">
 		for _, s := range strategies {
 			@Row(s)
 		}
@@ -25,15 +26,20 @@ templ Panel(strategies []*domain.Strategy) {
 }
 
 templ Row(s *domain.Strategy) {
-	<div class="card strategy-row" id={ "strategy-row-" + s.ID.String() }>
-		<div class="card__title">{ s.Name }</div>
-		<div class="card__body">
-			<span class="badge">{ string(s.Status) }</span>
-			<span class="muted">v{ strconv.FormatUint(s.Version, 10) }</span>
+	<div class="bg-surface border border-border rounded-lg p-6 shadow-sm" id={ "strategy-row-" + s.ID.String() }>
+		<div class="text-lg font-semibold mb-2">
+			<div class="flex items-center justify-between gap-2">
+				<h3 class="text-2xl font-semibold">{ s.Name }</h3>
+				<button type="button" class="inline-flex items-center justify-center gap-2 px-3 py-1 rounded-md text-sm font-medium bg-danger text-danger-text hover:bg-danger-hover transition-colors" hx-delete={fmt.Sprintf("/web/strategies/%s", s.ID.String())} hx-target={ "#strategy-row-" + s.ID.String() } hx-swap="outerHTML swap:0.5s">X</button>
+			</div>
+		</div>
+		<div class="text-text-muted flex items-center gap-2">
+			<span class="inline-flex px-2 py-1 rounded-full bg-bg-subtle text-sm font-medium">{ string(s.Status) }</span>
+			<span class="text-text-muted text-sm">v{ strconv.FormatUint(s.Version, 10) }</span>
 		</div>
 	</div>
 }
 
 templ CreateError(message string) {
-	<div class="alert alert--danger">{ message }</div>
+	<div class="px-4 py-2 rounded-md text-sm border border-red-500 bg-red-50 text-red-700">{ message }</div>
 }

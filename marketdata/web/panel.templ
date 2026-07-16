@@ -3,23 +3,16 @@ package web
 import "apex/internal/domain"
 
 templ Panel(active []domain.Subscription) {
-	<form id="subscribe-form" class="toolbar" hx-post="/web/subscribe" hx-target="#charts" hx-swap="beforeend">
-		<div class="field">
-			<label for="symbol">Symbol</label>
-			<input class="input" type="text" id="symbol" name="symbol" placeholder="AAPL" maxlength="10" autocomplete="off" required/>
+	<form id="subscribe-form" class="flex items-end gap-4 flex-wrap my-6" hx-post="/web/subscribe" hx-target="#charts" hx-swap="beforeend">
+		<div class="flex flex-col gap-1">
+			<label class="text-sm font-medium text-text-muted" for="symbol">Symbol</label>
+			<input class="px-4 py-2 border border-border rounded-md bg-surface text-text text-sm placeholder:text-text-muted focus:outline-none focus:border-primary focus:ring-2 focus:ring-focus-ring transition-colors" type="text" id="symbol" name="symbol" placeholder="AAPL" maxlength="10" autocomplete="off" required/>
 		</div>
-		<div class="field">
-			<label for="timeframe">Timeframe</label>
-			<select class="select" id="timeframe" name="timeframe">
-				<option value="1Min">1 Minute</option>
-				<option value="5Min">5 Minutes</option>
-			</select>
-		</div>
-		<button class="btn btn--primary" type="submit">Subscribe</button>
+		<button class="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-md text-sm font-medium leading-none whitespace-nowrap bg-primary text-primary-text hover:bg-primary-hover disabled:opacity-60 disabled:cursor-not-allowed transition-colors" type="submit">Subscribe</button>
 	</form>
-	<div id="charts" class="charts-grid">
+	<div id="charts" class="grid grid-cols-[repeat(auto-fill,minmax(480px,1fr))] gap-6">
 		for _, s := range active {
-			@ChartPanel(s.Symbol, s.Timeframe)
+			@ChartPanel(s.Symbol, "1Min")
 		}
 	</div>
 }

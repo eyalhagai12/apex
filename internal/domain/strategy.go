@@ -34,6 +34,6 @@ func NewStrategy(name string) *Strategy {
 		ID:      id,
 		Name:    name,
 		Status:  StatusPending,
-		Version: 0,
+		Version: 1,
 	}
 }

@@ -21,9 +21,9 @@ func NewRepo(db *sql.DB) *MarketDataRepository {
 func (br *MarketDataRepository) StoreBar(ctx context.Context, bar domain.Bar) error {
 	_, err := br.db.ExecContext(
 		ctx,
-		`INSERT INTO bars (time, symbol, timeframe, high, open, low, close, volume)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		 ON CONFLICT (symbol, timeframe, time) DO UPDATE SET
+		`INSERT INTO bars (time, symbol, high, open, low, close, volume)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		 ON CONFLICT (symbol, time) DO UPDATE SET
 		     high = excluded.high,
 		     open = excluded.open,
 		     low = excluded.low,
@@ -31,7 +31,6 @@ func (br *MarketDataRepository) StoreBar(ctx context.Context, bar domain.Bar) er
 		     volume = excluded.volume`,
 		bar.Time,
 		bar.Symbol,
-		bar.Timeframe,
 		bar.High,
 		bar.Open,
 		bar.Low,
@@ -45,12 +44,13 @@ func (br *MarketDataRepository) StoreBar(ctx context.Context, bar domain.Bar) er
 	return nil
 }
 
-func (br *MarketDataRepository) List(ctx context.Context, symbol, tf string) ([]domain.Bar, error) {
+// List returns stored 1-minute bars for symbol in chronological order.
+func (br *MarketDataRepository) List(ctx context.Context, symbol string) ([]domain.Bar, error) {
 	bars := make([]domain.Bar, 0)
 	rows, err := br.db.QueryContext(ctx,
-		`SELECT time, symbol, timeframe, open, high, low, close, volume
-		 FROM bars WHERE symbol = $1 AND timeframe = $2 ORDER BY time ASC`,
-		symbol, tf)
+		`SELECT time, symbol, open, high, low, close, volume
+		 FROM bars WHERE symbol = $1 ORDER BY time ASC`,
+		symbol)
 	if err != nil {
 		return nil, err
 	}
@@ -59,7 +59,46 @@ func (br *MarketDataRepository) List(ctx context.Context, symbol, tf string) ([]
 	for rows.Next() {
 		bar := domain.Bar{}
 
-		if err := rows.Scan(&bar.Time, &bar.Symbol, &bar.Timeframe, &bar.Open, &bar.High, &bar.Low, &bar.Close, &bar.Volume); err != nil {
+		if err := rows.Scan(&bar.Time, &bar.Symbol, &bar.Open, &bar.High, &bar.Low, &bar.Close, &bar.Volume); err != nil {
+			return nil, err
+		}
+
+		bars = append(bars, bar)
+	}
+
+	return bars, rows.Err()
+}
+
+// ListAggregated returns bars for symbol bucketed into the given TimescaleDB
+// interval (e.g. "5 minutes", "1 hour"), computed on the fly via time_bucket
+// over the stored 1-minute bars. bucket must come from a whitelisted set
+// (see marketdata.intervalBuckets) - it is bound as a query parameter here,
+// never string-concatenated, so an unexpected value fails to parse as an
+// interval rather than becoming a SQL injection vector.
+func (br *MarketDataRepository) ListAggregated(ctx context.Context, symbol, bucket string) ([]domain.Bar, error) {
+	bars := make([]domain.Bar, 0)
+	rows, err := br.db.QueryContext(ctx,
+		`SELECT time_bucket($1::interval, time) AS bucket,
+		        symbol,
+		        first(open, time) AS open,
+		        max(high) AS high,
+		        min(low) AS low,
+		        last(close, time) AS close,
+		        sum(volume) AS volume
+		 FROM bars
+		 WHERE symbol = $2
+		 GROUP BY bucket, symbol
+		 ORDER BY bucket ASC`,
+		bucket, symbol)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		bar := domain.Bar{}
+
+		if err := rows.Scan(&bar.Time, &bar.Symbol, &bar.Open, &bar.High, &bar.Low, &bar.Close, &bar.Volume); err != nil {
 			return nil, err
 		}
 
@@ -93,18 +132,18 @@ func (br *MarketDataRepository) storeBarsChunk(ctx context.Context, chunk []doma
 	}
 
 	var sb strings.Builder
-	sb.WriteString(`INSERT INTO bars (time, symbol, timeframe, high, open, low, close, volume) VALUES `)
-	args := make([]any, 0, len(chunk)*8)
+	sb.WriteString(`INSERT INTO bars (time, symbol, high, open, low, close, volume) VALUES `)
+	args := make([]any, 0, len(chunk)*7)
 	for i, bar := range chunk {
 		if i > 0 {
 			sb.WriteString(", ")
 		}
-		base := i * 8
-		fmt.Fprintf(&sb, "($%d, $%d, $%d, $%d, $%d, $%d, $%d, $%d)",
-			base+1, base+2, base+3, base+4, base+5, base+6, base+7, base+8)
-		args = append(args, bar.Time, bar.Symbol, bar.Timeframe, bar.High, bar.Open, bar.Low, bar.Close, bar.Volume)
+		base := i * 7
+		fmt.Fprintf(&sb, "($%d, $%d, $%d, $%d, $%d, $%d, $%d)",
+			base+1, base+2, base+3, base+4, base+5, base+6, base+7)
+		args = append(args, bar.Time, bar.Symbol, bar.High, bar.Open, bar.Low, bar.Close, bar.Volume)
 	}
-	sb.WriteString(` ON CONFLICT (symbol, timeframe, time) DO UPDATE SET
+	sb.WriteString(` ON CONFLICT (symbol, time) DO UPDATE SET
 		high = excluded.high,
 		open = excluded.open,
 		low = excluded.low,
@@ -115,25 +154,25 @@ func (br *MarketDataRepository) storeBarsChunk(ctx context.Context, chunk []doma
 	return err
 }
 
-func (br *MarketDataRepository) SaveSubscription(ctx context.Context, symbol, tf string) error {
+func (br *MarketDataRepository) SaveSubscription(ctx context.Context, symbol string) error {
 	_, err := br.db.ExecContext(ctx,
-		`INSERT INTO subscriptions (symbol, timeframe) VALUES ($1, $2)
-		 ON CONFLICT (symbol, timeframe) DO NOTHING`,
-		symbol, tf)
+		`INSERT INTO subscriptions (symbol) VALUES ($1)
+		 ON CONFLICT (symbol) DO NOTHING`,
+		symbol)
 	return err
 }
 
-func (br *MarketDataRepository) DeleteSubscription(ctx context.Context, symbol, tf string) error {
+func (br *MarketDataRepository) DeleteSubscription(ctx context.Context, symbol string) error {
 	_, err := br.db.ExecContext(ctx,
-		`DELETE FROM subscriptions WHERE symbol = $1 AND timeframe = $2`,
-		symbol, tf)
+		`DELETE FROM subscriptions WHERE symbol = $1`,
+		symbol)
 	return err
 }
 
 func (br *MarketDataRepository) ListSubscriptions(ctx context.Context) ([]domain.Subscription, error) {
 	subs := make([]domain.Subscription, 0)
 	rows, err := br.db.QueryContext(ctx,
-		`SELECT symbol, timeframe FROM subscriptions ORDER BY symbol, timeframe`)
+		`SELECT symbol FROM subscriptions ORDER BY symbol`)
 	if err != nil {
 		return nil, err
 	}
@@ -141,35 +180,10 @@ func (br *MarketDataRepository) ListSubscriptions(ctx context.Context) ([]domain
 
 	for rows.Next() {
 		var s domain.Subscription
-		if err := rows.Scan(&s.Symbol, &s.Timeframe); err != nil {
+		if err := rows.Scan(&s.Symbol); err != nil {
 			return nil, err
 		}
 		subs = append(subs, s)
 	}
 	return subs, rows.Err()
-}
-
-func (mdr *MarketDataRepository) TrackSymbol(ctx context.Context, symbol string) error {
-	row := mdr.db.QueryRowContext(ctx, "SELET id, name FROM symbols WHERE name = $1", symbol)
-
-	var s string
-	if err := row.Scan(&s); err == nil {
-		return nil
-	}
-
-	_, err := mdr.db.ExecContext(ctx, "INSERT INTO symbols (name) VALUES ($1)", symbol)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func (mdr *MarketDataRepository) UntrackSymbol(ctx context.Context, symbol string) error {
-	_, err := mdr.db.ExecContext(ctx, "DELETE FROM symbols WHERE name = $1", symbol)
-	if err != nil {
-		return err
-	}
-
-	return nil
 }

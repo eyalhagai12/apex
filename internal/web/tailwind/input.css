@@ -1,0 +1,29 @@
+@import "tailwindcss";
+
+@theme {
+  --default-font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --default-mono-font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+  --color-bg: #16181b;
+  --color-bg-subtle: #212529;
+  --color-surface: #343a40;
+  --color-text: #f1f3f5;
+  --color-text-muted: #ced4da;
+  --color-border: #495057;
+
+  --color-primary: #3b82f6;
+  --color-primary-hover: #60a5fa;
+  --color-primary-text: #16181b;
+
+  --color-danger: #ef4444;
+  --color-danger-hover: #ef4444;
+  --color-danger-text: #ffffff;
+
+  --color-success: #16a34a;
+  --color-warning: #ca8a04;
+  --color-focus-ring: #93c5fd;
+
+  /* used only by dashboard.js for chart candle theming */
+  --color-chart-up: #16a34a;
+  --color-chart-down: #dc2626;
+}

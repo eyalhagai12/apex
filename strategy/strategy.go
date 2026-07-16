@@ -68,8 +68,12 @@ func (s *Service) List(ctx context.Context) ([]*domain.Strategy, error) {
 	return s.store.List(ctx)
 }
 
-func (s *Service) Create(ctx context.Context, name string) (*domain.Strategy, error) {
+func (s *Service) Create(ctx context.Context, name string, code []byte) (*domain.Strategy, error) {
 	strategy := domain.NewStrategy(name)
+
+	if _, err := s.fileStore.Upload(ctx, strategy, code); err != nil {
+		return nil, err
+	}
 
 	if err := s.store.Save(ctx, strategy); err != nil {
 		return nil, err

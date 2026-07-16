@@ -21,13 +21,6 @@ import (
 // client's fetch/htmx swap is a no-op and no duplicate panel is added.
 var errAlreadySubscribed = errors.New("already subscribed")
 
-var validTimeframes = map[string]bool{"1Min": true, "5Min": true}
-
-type subKey struct {
-	symbol string
-	tf     string
-}
-
 type sseEvent struct {
 	name string
 	data []byte
@@ -41,7 +34,7 @@ type backfillEvent struct {
 // liveSub tracks one active symbol/timeframe subscription and fans its live
 // bars and backfill-completion event out to any number of SSE listeners.
 type liveSub struct {
-	key    subKey
+	key    string
 	cancel context.CancelFunc
 
 	mu               sync.Mutex
@@ -103,14 +96,14 @@ type Dashboard struct {
 	ctx    context.Context // server-lifetime base context, not any single request's
 
 	mu   sync.Mutex
-	subs map[subKey]*liveSub
+	subs map[string]*liveSub
 }
 
 // Mount registers marketdata's own htmx routes (subscribe, SSE, bars) and
 // returns the Dashboard handle so a composition root can pull the active
 // subscription list to render alongside other domains' fragments.
 func Mount(mux *http.ServeMux, log *slog.Logger, mkdata *marketdata.Module, baseCtx context.Context) *Dashboard {
-	d := &Dashboard{mkdata: mkdata, log: log, ctx: baseCtx, subs: make(map[subKey]*liveSub)}
+	d := &Dashboard{mkdata: mkdata, log: log, ctx: baseCtx, subs: make(map[string]*liveSub)}
 	d.restoreSubscriptions()
 
 	mux.HandleFunc("POST /web/subscribe", d.handleSubscribe)
@@ -124,22 +117,19 @@ func Mount(mux *http.ServeMux, log *slog.Logger, mkdata *marketdata.Module, base
 // by symbol then timeframe, for rendering into a page.
 func (d *Dashboard) Active() []domain.Subscription {
 	d.mu.Lock()
-	keys := make([]subKey, 0, len(d.subs))
+	keys := make([]string, 0, len(d.subs))
 	for k := range d.subs {
 		keys = append(keys, k)
 	}
 	d.mu.Unlock()
 
 	sort.Slice(keys, func(i, j int) bool {
-		if keys[i].symbol != keys[j].symbol {
-			return keys[i].symbol < keys[j].symbol
-		}
-		return keys[i].tf < keys[j].tf
+		return keys[i] < keys[j]
 	})
 
 	active := make([]domain.Subscription, len(keys))
 	for i, k := range keys {
-		active[i] = domain.Subscription{Symbol: k.symbol, Timeframe: k.tf}
+		active[i] = domain.Subscription{Symbol: k}
 	}
 	return active
 }
@@ -148,12 +138,12 @@ func (d *Dashboard) Active() []domain.Subscription {
 // in d.subs. It does not touch backfill or persistence beyond what
 // Module.Subscribe already does - callers decide whether a backfill is
 // needed (a brand-new subscription) or not (restoring one from the DB).
-func (d *Dashboard) startLiveSubscription(symbol, tf string) (*liveSub, context.Context, error) {
-	key := subKey{symbol: symbol, tf: tf}
+func (d *Dashboard) startLiveSubscription(symbol string) (*liveSub, context.Context, error) {
+	key := symbol
 	subCtx, cancel := context.WithCancel(d.ctx)
 	sub := &liveSub{key: key, cancel: cancel, listeners: make(map[int]chan sseEvent)}
 
-	if err := d.mkdata.Subscribe(subCtx, symbol, tf, func(bar domain.Bar) {
+	if err := d.mkdata.Subscribe(subCtx, symbol, func(bar domain.Bar) {
 		data, err := json.Marshal(toChartBar(bar))
 		if err != nil {
 			return
@@ -177,14 +167,14 @@ func (d *Dashboard) startLiveSubscription(symbol, tf string) (*liveSub, context.
 // get restored again on the next restart. Unsubscribe runs on d.ctx, not
 // sub's own subCtx, since sub.cancel() (called last) would otherwise make
 // that context dead before Unsubscribe's DB/provider calls complete.
-func (d *Dashboard) teardown(symbol, tf string, sub *liveSub) {
-	key := subKey{symbol: symbol, tf: tf}
+func (d *Dashboard) teardown(symbol string, sub *liveSub) {
+	key := symbol
 	d.mu.Lock()
 	delete(d.subs, key)
 	d.mu.Unlock()
 
-	if err := d.mkdata.Unsubscribe(d.ctx, symbol, tf); err != nil {
-		d.log.Error("teardown unsubscribe", slog.String("symbol", symbol), slog.String("tf", tf), slog.Any("error", err))
+	if err := d.mkdata.Unsubscribe(d.ctx, symbol); err != nil {
+		d.log.Error("teardown unsubscribe", slog.String("symbol", symbol), slog.Any("error", err))
 	}
 	sub.cancel()
 }
@@ -206,26 +196,26 @@ func (d *Dashboard) restoreSubscriptions() {
 	}
 
 	for _, s := range subs {
-		bars, err := d.mkdata.ListBars(d.ctx, s.Symbol, s.Timeframe)
+		bars, err := d.mkdata.ListBars(d.ctx, s.Symbol, "1Min")
 		if err != nil {
-			d.log.Error("check stored bars for restore", slog.String("symbol", s.Symbol), slog.String("tf", s.Timeframe), slog.Any("error", err))
+			d.log.Error("check stored bars for restore", slog.String("symbol", s.Symbol), slog.Any("error", err))
 			continue
 		}
 		if len(bars) == 0 {
-			d.log.Warn("skipping restore, no stored bars", slog.String("symbol", s.Symbol), slog.String("tf", s.Timeframe))
-			if err := d.mkdata.Unsubscribe(d.ctx, s.Symbol, s.Timeframe); err != nil {
-				d.log.Error("cleanup stale subscription", slog.String("symbol", s.Symbol), slog.String("tf", s.Timeframe), slog.Any("error", err))
+			d.log.Warn("skipping restore, no stored bars", slog.String("symbol", s.Symbol))
+			if err := d.mkdata.Unsubscribe(d.ctx, s.Symbol); err != nil {
+				d.log.Error("cleanup stale subscription", slog.String("symbol", s.Symbol), slog.Any("error", err))
 			}
 			continue
 		}
 
-		sub, _, err := d.startLiveSubscription(s.Symbol, s.Timeframe)
+		sub, _, err := d.startLiveSubscription(s.Symbol)
 		if err != nil {
-			d.log.Error("restore subscription", slog.String("symbol", s.Symbol), slog.String("tf", s.Timeframe), slog.Any("error", err))
+			d.log.Error("restore subscription", slog.String("symbol", s.Symbol), slog.Any("error", err))
 			continue
 		}
 		sub.markBackfilled(len(bars), "")
-		d.log.Info("restored subscription", slog.String("symbol", s.Symbol), slog.String("tf", s.Timeframe), slog.Int("n_bars", len(bars)))
+		d.log.Info("restored subscription", slog.String("symbol", s.Symbol), slog.Int("n_bars", len(bars)))
 	}
 }
 
@@ -233,8 +223,8 @@ func (d *Dashboard) restoreSubscriptions() {
 // immediately, plus an async one-year backfill in the background. If
 // symbol/tf is already subscribed, it returns errAlreadySubscribed instead of
 // touching the existing subscription.
-func (d *Dashboard) getOrCreate(symbol, tf string) (*liveSub, error) {
-	key := subKey{symbol: symbol, tf: tf}
+func (d *Dashboard) getOrCreate(symbol string) (*liveSub, error) {
+	key := symbol
 
 	d.mu.Lock()
 	if _, ok := d.subs[key]; ok {
@@ -243,14 +233,14 @@ func (d *Dashboard) getOrCreate(symbol, tf string) (*liveSub, error) {
 	}
 	d.mu.Unlock()
 
-	sub, subCtx, err := d.startLiveSubscription(symbol, tf)
+	sub, subCtx, err := d.startLiveSubscription(symbol)
 	if err != nil {
 		return nil, err
 	}
 
 	end := time.Now()
 	start := end.AddDate(-1, 0, 0)
-	d.mkdata.Backfill(subCtx, symbol, tf, start, end, func(res marketdata.BackfillResult) {
+	d.mkdata.Backfill(subCtx, symbol, start, end, func(res marketdata.BackfillResult) {
 		errStr := ""
 		if res.Err != nil {
 			errStr = res.Err.Error()
@@ -260,7 +250,7 @@ func (d *Dashboard) getOrCreate(symbol, tf string) (*liveSub, error) {
 			sub.broadcast("backfill_complete", data)
 		}
 		if res.Err != nil {
-			d.teardown(symbol, tf, sub)
+			d.teardown(symbol, sub)
 		}
 	})
 
@@ -276,7 +266,6 @@ func (d *Dashboard) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	symbol := strings.ToUpper(strings.TrimSpace(r.FormValue("symbol")))
-	tf := r.FormValue("timeframe")
 
 	if symbol == "" {
 		if err := SubscribeError("symbol is required").Render(r.Context(), w); err != nil {
@@ -284,14 +273,8 @@ func (d *Dashboard) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	if !validTimeframes[tf] {
-		if err := SubscribeError("timeframe must be 1Min or 5Min").Render(r.Context(), w); err != nil {
-			d.log.Error("render subscribe error", slog.Any("error", err))
-		}
-		return
-	}
 
-	if _, err := d.getOrCreate(symbol, tf); err != nil {
+	if _, err := d.getOrCreate(symbol); err != nil {
 		if errors.Is(err, errAlreadySubscribed) {
 			// Non-2xx: htmx's default swap only applies to successful
 			// responses, so this is a no-op on the client - no duplicate
@@ -299,24 +282,23 @@ func (d *Dashboard) handleSubscribe(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "already subscribed", http.StatusConflict)
 			return
 		}
-		d.log.Error("subscribe", slog.String("symbol", symbol), slog.String("tf", tf), slog.Any("error", err))
+		d.log.Error("subscribe", slog.String("symbol", symbol), slog.Any("error", err))
 		if renderErr := SubscribeError(fmt.Sprintf("failed to subscribe to %s: %v", symbol, err)).Render(r.Context(), w); renderErr != nil {
 			d.log.Error("render subscribe error", slog.Any("error", renderErr))
 		}
 		return
 	}
 
-	if err := ChartPanel(symbol, tf).Render(r.Context(), w); err != nil {
+	if err := ChartPanel(symbol, "1Min").Render(r.Context(), w); err != nil {
 		d.log.Error("render chart panel", slog.Any("error", err))
 	}
 }
 
 func (d *Dashboard) handleEvents(w http.ResponseWriter, r *http.Request) {
 	symbol := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("symbol")))
-	tf := r.URL.Query().Get("timeframe")
 
 	d.mu.Lock()
-	sub, ok := d.subs[subKey{symbol: symbol, tf: tf}]
+	sub, ok := d.subs[symbol]
 	d.mu.Unlock()
 	if !ok {
 		http.Error(w, "not subscribed", http.StatusNotFound)
@@ -360,6 +342,10 @@ func (d *Dashboard) handleBars(w http.ResponseWriter, r *http.Request) {
 
 	bars, err := d.mkdata.ListBars(r.Context(), symbol, tf)
 	if err != nil {
+		if errors.Is(err, marketdata.ErrUnsupportedInterval) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		d.log.Error("list bars", slog.String("symbol", symbol), slog.String("tf", tf), slog.Any("error", err))
 		http.Error(w, "failed to load bars", http.StatusInternalServerError)
 		return

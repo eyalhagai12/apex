@@ -82,14 +82,14 @@
       "targets": [
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum by (symbol, timeframe) (increase(apex_bars_backfilled_total[1d]))",
-          "legendFormat": "{{symbol}} / {{timeframe}} (backfilled)",
+          "expr": "sum by (symbol) (increase(apex_bars_backfilled_total[1d]))",
+          "legendFormat": "{{symbol}} (backfilled)",
           "instant": true
         },
         {
           "datasource": { "type": "prometheus", "uid": "prometheus" },
-          "expr": "sum by (symbol, timeframe) (increase(apex_bars_streamed_total[1d]))",
-          "legendFormat": "{{symbol}} / {{timeframe}} (streamed)",
+          "expr": "sum by (symbol) (increase(apex_bars_streamed_total[1d]))",
+          "legendFormat": "{{symbol}} (streamed)",
           "instant": true
         }
       ],

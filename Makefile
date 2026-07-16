@@ -5,16 +5,28 @@ POSTGRES_PORT ?= 5432
 
 DB_DSN := postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@localhost:$(POSTGRES_PORT)/$(POSTGRES_DB)?sslmode=disable
 
-.PHONY: run dev templ setup teardown migrate-up migrate-down migrate-create dev templ reboot-setup
+TAILWIND_VERSION ?= 4.3.3
+TAILWIND_BIN := tools/tailwindcss.exe
+
+.PHONY: run dev templ setup teardown migrate-up migrate-down migrate-create dev templ reboot-setup tailwindcss-install css css-watch
 
 run:
 	go run ./cmd/server
 
-dev:
+dev: css
 	go tool air
 
 templ:
 	go tool templ generate
+
+tailwindcss-install:
+	@if not exist $(TAILWIND_BIN) powershell -Command "New-Item -ItemType Directory -Force tools | Out-Null; Invoke-WebRequest -Uri https://github.com/tailwindlabs/tailwindcss/releases/download/v$(TAILWIND_VERSION)/tailwindcss-windows-x64.exe -OutFile $(TAILWIND_BIN)"
+
+css: tailwindcss-install
+	$(TAILWIND_BIN) -i internal/web/tailwind/input.css -o internal/web/static/css/app.css --minify
+
+css-watch: tailwindcss-install
+	$(TAILWIND_BIN) -i internal/web/tailwind/input.css -o internal/web/static/css/app.css --watch
 
 setup:
 	docker compose up -d

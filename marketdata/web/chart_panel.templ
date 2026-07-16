@@ -1,12 +1,21 @@
 package web
 
 templ ChartPanel(symbol string, tf string) {
-	<div class="card chart-panel" id={ "chart-panel-" + symbol + "-" + tf } data-symbol={ symbol } data-timeframe={ tf }>
-		<div class="card__title">{ symbol } · { tf }</div>
-		<div class="chart-container"></div>
+	<div class="chart-panel bg-surface border border-border rounded-lg p-6 shadow-sm" id={ "chart-panel-" + symbol } data-symbol={ symbol } data-timeframe={ tf }>
+		<div class="text-lg font-semibold mb-2 flex items-center justify-between gap-2">
+			<span>{ symbol }</span>
+			<select class="interval-select px-2 py-1 border border-border rounded-md bg-surface text-text text-sm focus:outline-none focus:border-primary focus:ring-2 focus:ring-focus-ring transition-colors">
+				<option value="1Min" selected?={ tf == "1Min" }>1 Minute</option>
+				<option value="5Min" selected?={ tf == "5Min" }>5 Minutes</option>
+				<option value="15Min" selected?={ tf == "15Min" }>15 Minutes</option>
+				<option value="1H" selected?={ tf == "1H" }>1 Hour</option>
+				<option value="1D" selected?={ tf == "1D" }>1 Day</option>
+			</select>
+		</div>
+		<div class="chart-container w-full h-[480px] relative"></div>
 	</div>
 }
 
 templ SubscribeError(message string) {
-	<div class="alert alert--danger">{ message }</div>
+	<div class="px-4 py-2 rounded-md text-sm border border-red-500 bg-red-50 text-red-700">{ message }</div>
 }

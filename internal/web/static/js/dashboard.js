@@ -1,6 +1,49 @@
 (function () {
   var CHART_HEIGHT = 480;
 
+  var INTERVAL_SECONDS = {
+    "1Min": 60,
+    "5Min": 300,
+    "15Min": 900,
+    "1H": 3600,
+    "1D": 86400,
+  };
+
+  function bucketStart(unixSeconds, intervalSeconds) {
+    return Math.floor(unixSeconds / intervalSeconds) * intervalSeconds;
+  }
+
+  // Live SSE ticks are always raw 1-minute bars. When a panel is displaying
+  // a coarser interval, fold each tick into the currently forming bucket
+  // (extend it) or roll over to a new one, so the chart keeps updating live
+  // regardless of the selected interval.
+  function applyLiveBar(panel, raw) {
+    var intervalSeconds = INTERVAL_SECONDS[panel.dataset.timeframe] || 60;
+    var time = bucketStart(raw.time, intervalSeconds);
+
+    var last = panel._lastBar;
+    var merged;
+    if (last && last.time === time) {
+      merged = {
+        time: time,
+        open: last.open,
+        high: Math.max(last.high, raw.high),
+        low: Math.min(last.low, raw.low),
+        close: raw.close,
+      };
+    } else {
+      merged = {
+        time: time,
+        open: raw.open,
+        high: raw.high,
+        low: raw.low,
+        close: raw.close,
+      };
+    }
+    panel._lastBar = merged;
+    panel._series.update(merged);
+  }
+
   function themeColor(name, fallback) {
     var v = getComputedStyle(document.documentElement)
       .getPropertyValue(name)
@@ -14,9 +57,11 @@
       return;
     }
     var overlay = document.createElement("div");
-    overlay.className = "spinner-overlay";
+    overlay.className =
+      "spinner-overlay absolute inset-0 flex items-center justify-center bg-surface z-10";
     var spinner = document.createElement("div");
-    spinner.className = "spinner";
+    spinner.className =
+      "w-8 h-8 rounded-full border-[3px] border-border border-t-primary animate-spin";
     overlay.appendChild(spinner);
     container.appendChild(overlay);
   }
@@ -45,6 +90,7 @@
       .then(function (bars) {
         panel._series.setData(bars);
         panel._chart.timeScale().fitContent();
+        panel._lastBar = bars.length ? bars[bars.length - 1] : null;
       })
       .finally(function () {
         hideSpinner(panel);
@@ -60,7 +106,8 @@
     }
 
     var alert = document.createElement("div");
-    alert.className = "alert alert--danger";
+    alert.className =
+      "px-4 py-2 rounded-md text-sm border border-red-500 bg-red-50 text-red-700";
     alert.textContent =
       panel.dataset.symbol +
       " " +
@@ -71,7 +118,8 @@
 
     var dismiss = document.createElement("button");
     dismiss.type = "button";
-    dismiss.className = "btn";
+    dismiss.className =
+      "inline-flex items-center justify-center gap-2 px-4 py-2 rounded-md text-sm font-medium bg-surface text-text border border-border hover:bg-bg-subtle transition-colors ml-2";
     dismiss.textContent = "Dismiss";
     dismiss.addEventListener("click", function () {
       panel.remove();
@@ -89,15 +137,11 @@
   function connectEvents(panel) {
     showSpinner(panel);
     var symbol = panel.dataset.symbol;
-    var tf = panel.dataset.timeframe;
     var es = new EventSource(
-      "/web/events?symbol=" +
-        encodeURIComponent(symbol) +
-        "&timeframe=" +
-        encodeURIComponent(tf),
+      "/web/events?symbol=" + encodeURIComponent(symbol),
     );
     es.addEventListener("bar", function (evt) {
-      panel._series.update(JSON.parse(evt.data));
+      applyLiveBar(panel, JSON.parse(evt.data));
     });
     es.addEventListener("backfill_complete", function (evt) {
       var payload = {};
@@ -136,11 +180,11 @@
     });
 
     var series = chart.addCandlestickSeries({
-      upColor: themeColor("--color-green-600", "#16a34a"),
-      downColor: themeColor("--color-red-600", "#dc2626"),
+      upColor: themeColor("--color-chart-up", "#16a34a"),
+      downColor: themeColor("--color-chart-down", "#dc2626"),
       borderVisible: false,
-      wickUpColor: themeColor("--color-green-600", "#16a34a"),
-      wickDownColor: themeColor("--color-red-600", "#dc2626"),
+      wickUpColor: themeColor("--color-chart-up", "#16a34a"),
+      wickDownColor: themeColor("--color-chart-down", "#dc2626"),
     });
 
     panel._chart = chart;
@@ -153,6 +197,15 @@
     });
     resizeObserver.observe(container);
     panel._resizeObserver = resizeObserver;
+
+    var intervalSelect = panel.querySelector(".interval-select");
+    if (intervalSelect) {
+      intervalSelect.addEventListener("change", function () {
+        panel.dataset.timeframe = intervalSelect.value;
+        panel._lastBar = null;
+        hydrate(panel);
+      });
+    }
 
     hydrate(panel).then(function () {
       connectEvents(panel);
@@ -191,10 +244,7 @@
     }
     form.addEventListener("submit", function (evt) {
       var symbol = form.symbol.value.trim().toUpperCase();
-      var tf = form.timeframe.value;
-      var existing = document.getElementById(
-        "chart-panel-" + symbol + "-" + tf,
-      );
+      var existing = document.getElementById("chart-panel-" + symbol);
       if (existing) {
         evt.preventDefault();
         evt.stopPropagation();

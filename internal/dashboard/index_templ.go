@@ -48,7 +48,7 @@ func Index(active []domain.Subscription, strategies []*domain.Strategy) templ.Co
 				}()
 			}
 			ctx = templ.InitializeContext(ctx)
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div class=\"container container--lg flex\"><h1>Apex</h1><div class=\"section\"><h2>Market Data</h2>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 1, "<div class=\"w-full max-w-[1024px] mx-auto px-4 flex flex-col gap-6\"><h1 class=\"text-4xl font-semibold\">Apex</h1><div class=\"mb-8\"><h2 class=\"text-3xl font-semibold\">Market Data</h2>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
@@ -56,7 +56,7 @@ func Index(active []domain.Subscription, strategies []*domain.Strategy) templ.Co
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "</div><div class=\"section\"><h2>Strategies</h2>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "</div><div class=\"mb-8\"><h2 class=\"text-3xl font-semibold\">Strategies</h2>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
