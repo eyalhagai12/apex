@@ -2,71 +2,55 @@ package storage
 
 import (
 	"apex/internal/domain"
+	"apex/marketdata/internal/storage/sqlcgen"
 	"context"
 	"database/sql"
 	"fmt"
-	"strings"
+	"time"
 )
 
 type MarketDataRepository struct {
-	db *sql.DB
+	queries *sqlcgen.Queries
 }
 
 func NewRepo(db *sql.DB) *MarketDataRepository {
 	return &MarketDataRepository{
-		db: db,
+		queries: sqlcgen.New(db),
 	}
 }
 
 func (br *MarketDataRepository) StoreBar(ctx context.Context, bar domain.Bar) error {
-	_, err := br.db.ExecContext(
-		ctx,
-		`INSERT INTO bars (time, symbol, high, open, low, close, volume)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)
-		 ON CONFLICT (symbol, time) DO UPDATE SET
-		     high = excluded.high,
-		     open = excluded.open,
-		     low = excluded.low,
-		     close = excluded.close,
-		     volume = excluded.volume`,
-		bar.Time,
-		bar.Symbol,
-		bar.High,
-		bar.Open,
-		bar.Low,
-		bar.Close,
-		bar.Volume,
-	)
-	if err != nil {
-		return err
-	}
-
-	return nil
+	return br.queries.UpsertBar(ctx, sqlcgen.UpsertBarParams{
+		Time:   bar.Time,
+		Symbol: bar.Symbol,
+		High:   bar.High,
+		Open:   bar.Open,
+		Low:    bar.Low,
+		Close:  bar.Close,
+		Volume: int64(bar.Volume),
+	})
 }
 
 // List returns stored 1-minute bars for symbol in chronological order.
 func (br *MarketDataRepository) List(ctx context.Context, symbol string) ([]domain.Bar, error) {
-	bars := make([]domain.Bar, 0)
-	rows, err := br.db.QueryContext(ctx,
-		`SELECT time, symbol, open, high, low, close, volume
-		 FROM bars WHERE symbol = $1 ORDER BY time ASC`,
-		symbol)
+	rows, err := br.queries.ListBarsBySymbol(ctx, symbol)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	for rows.Next() {
-		bar := domain.Bar{}
-
-		if err := rows.Scan(&bar.Time, &bar.Symbol, &bar.Open, &bar.High, &bar.Low, &bar.Close, &bar.Volume); err != nil {
-			return nil, err
+	bars := make([]domain.Bar, len(rows))
+	for i, row := range rows {
+		bars[i] = domain.Bar{
+			Time:   row.Time,
+			Symbol: row.Symbol,
+			High:   row.High,
+			Open:   row.Open,
+			Low:    row.Low,
+			Close:  row.Close,
+			Volume: uint64(row.Volume),
 		}
-
-		bars = append(bars, bar)
 	}
-
-	return bars, rows.Err()
+	return bars, nil
 }
 
 // ListAggregated returns bars for symbol bucketed into the given TimescaleDB
@@ -76,43 +60,34 @@ func (br *MarketDataRepository) List(ctx context.Context, symbol string) ([]doma
 // never string-concatenated, so an unexpected value fails to parse as an
 // interval rather than becoming a SQL injection vector.
 func (br *MarketDataRepository) ListAggregated(ctx context.Context, symbol, bucket string) ([]domain.Bar, error) {
-	bars := make([]domain.Bar, 0)
-	rows, err := br.db.QueryContext(ctx,
-		`SELECT time_bucket($1::interval, time) AS bucket,
-		        symbol,
-		        first(open, time) AS open,
-		        max(high) AS high,
-		        min(low) AS low,
-		        last(close, time) AS close,
-		        sum(volume) AS volume
-		 FROM bars
-		 WHERE symbol = $2
-		 GROUP BY bucket, symbol
-		 ORDER BY bucket ASC`,
-		bucket, symbol)
+	rows, err := br.queries.ListAggregatedBars(ctx, sqlcgen.ListAggregatedBarsParams{
+		Bucket: bucket,
+		Symbol: symbol,
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	for rows.Next() {
-		bar := domain.Bar{}
-
-		if err := rows.Scan(&bar.Time, &bar.Symbol, &bar.Open, &bar.High, &bar.Low, &bar.Close, &bar.Volume); err != nil {
-			return nil, err
+	bars := make([]domain.Bar, len(rows))
+	for i, row := range rows {
+		bars[i] = domain.Bar{
+			Time:   row.Bucket,
+			Symbol: row.Symbol,
+			High:   row.High,
+			Open:   row.Open,
+			Low:    row.Low,
+			Close:  row.Close,
+			Volume: uint64(row.Volume),
 		}
-
-		bars = append(bars, bar)
 	}
-
-	return bars, rows.Err()
+	return bars, nil
 }
 
 const barsBulkInsertChunkSize = 500
 
-// StoreBars upserts bars in chunked, multi-row INSERT statements so a large
-// backfill (e.g. a year of 1-minute bars, ~98k rows) doesn't pay one
-// round-trip per row.
+// StoreBars upserts bars in chunked, set-based upserts (via unnest over
+// parallel arrays, see UpsertBars) so a large backfill (e.g. a year of
+// 1-minute bars, ~98k rows) doesn't pay one round-trip per row.
 func (br *MarketDataRepository) StoreBars(ctx context.Context, bars []domain.Bar) error {
 	for start := 0; start < len(bars); start += barsBulkInsertChunkSize {
 		end := start + barsBulkInsertChunkSize
@@ -131,59 +106,45 @@ func (br *MarketDataRepository) storeBarsChunk(ctx context.Context, chunk []doma
 		return nil
 	}
 
-	var sb strings.Builder
-	sb.WriteString(`INSERT INTO bars (time, symbol, high, open, low, close, volume) VALUES `)
-	args := make([]any, 0, len(chunk)*7)
-	for i, bar := range chunk {
-		if i > 0 {
-			sb.WriteString(", ")
-		}
-		base := i * 7
-		fmt.Fprintf(&sb, "($%d, $%d, $%d, $%d, $%d, $%d, $%d)",
-			base+1, base+2, base+3, base+4, base+5, base+6, base+7)
-		args = append(args, bar.Time, bar.Symbol, bar.High, bar.Open, bar.Low, bar.Close, bar.Volume)
+	params := sqlcgen.UpsertBarsParams{
+		Time:   make([]time.Time, len(chunk)),
+		Symbol: make([]string, len(chunk)),
+		High:   make([]float64, len(chunk)),
+		Open:   make([]float64, len(chunk)),
+		Low:    make([]float64, len(chunk)),
+		Close:  make([]float64, len(chunk)),
+		Volume: make([]int64, len(chunk)),
 	}
-	sb.WriteString(` ON CONFLICT (symbol, time) DO UPDATE SET
-		high = excluded.high,
-		open = excluded.open,
-		low = excluded.low,
-		close = excluded.close,
-		volume = excluded.volume`)
+	for i, bar := range chunk {
+		params.Time[i] = bar.Time
+		params.Symbol[i] = bar.Symbol
+		params.High[i] = bar.High
+		params.Open[i] = bar.Open
+		params.Low[i] = bar.Low
+		params.Close[i] = bar.Close
+		params.Volume[i] = int64(bar.Volume)
+	}
 
-	_, err := br.db.ExecContext(ctx, sb.String(), args...)
-	return err
+	return br.queries.UpsertBars(ctx, params)
 }
 
 func (br *MarketDataRepository) SaveSubscription(ctx context.Context, symbol string) error {
-	_, err := br.db.ExecContext(ctx,
-		`INSERT INTO subscriptions (symbol) VALUES ($1)
-		 ON CONFLICT (symbol) DO NOTHING`,
-		symbol)
-	return err
+	return br.queries.UpsertSubscription(ctx, symbol)
 }
 
 func (br *MarketDataRepository) DeleteSubscription(ctx context.Context, symbol string) error {
-	_, err := br.db.ExecContext(ctx,
-		`DELETE FROM subscriptions WHERE symbol = $1`,
-		symbol)
-	return err
+	return br.queries.DeleteSubscription(ctx, symbol)
 }
 
 func (br *MarketDataRepository) ListSubscriptions(ctx context.Context) ([]domain.Subscription, error) {
-	subs := make([]domain.Subscription, 0)
-	rows, err := br.db.QueryContext(ctx,
-		`SELECT symbol FROM subscriptions ORDER BY symbol`)
+	symbols, err := br.queries.ListSubscriptions(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	for rows.Next() {
-		var s domain.Subscription
-		if err := rows.Scan(&s.Symbol); err != nil {
-			return nil, err
-		}
-		subs = append(subs, s)
+	subs := make([]domain.Subscription, len(symbols))
+	for i, symbol := range symbols {
+		subs[i] = domain.Subscription{Symbol: symbol}
 	}
-	return subs, rows.Err()
+	return subs, nil
 }

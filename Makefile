@@ -8,7 +8,7 @@ DB_DSN := postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@localhost:$(POSTGRES_
 TAILWIND_VERSION ?= 4.3.3
 TAILWIND_BIN := tools/tailwindcss.exe
 
-.PHONY: run dev templ setup teardown migrate-up migrate-down migrate-create dev templ reboot-setup tailwindcss-install css css-watch
+.PHONY: run dev templ setup teardown migrate-up migrate-down migrate-create dev templ reboot-setup tailwindcss-install css css-watch sqlc
 
 run:
 	go run ./cmd/server
@@ -18,6 +18,9 @@ dev: css
 
 templ:
 	go tool templ generate
+
+sqlc:
+	go tool sqlc generate
 
 tailwindcss-install:
 	@if not exist $(TAILWIND_BIN) powershell -Command "New-Item -ItemType Directory -Force tools | Out-Null; Invoke-WebRequest -Uri https://github.com/tailwindlabs/tailwindcss/releases/download/v$(TAILWIND_VERSION)/tailwindcss-windows-x64.exe -OutFile $(TAILWIND_BIN)"
