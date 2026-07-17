@@ -75,7 +75,7 @@ func (s *Service) Create(ctx context.Context, name string, code []byte) (*domain
 		return nil, err
 	}
 
-	if err := s.store.Save(ctx, strategy); err != nil {
+	if err := s.deploy(ctx, strategy); err != nil {
 		return nil, err
 	}
 

@@ -67,3 +67,9 @@ Apex is a market data ingestion service. It connects to Alpaca's IEX feed, backf
 **Timeframe strings** passed to the provider use Alpaca's format (`"1Min"`, `"5Min"`) — `parseTimeFrame` maps these to SDK constants; anything unrecognized falls back to 1-Day bars.
 
 **Styling:** the dashboard uses Tailwind CSS v4 via the standalone CLI (no Node/npm) — utility classes live directly in `.templ` markup, no hand-maintained component CSS. Source is `internal/web/tailwind/input.css` (imports Tailwind, defines semantic color tokens like `--color-primary`/`--color-surface` in an `@theme` block, including a dark-mode override via `prefers-color-scheme`). Output is the gitignored, `go:embed`-ed `internal/web/static/css/app.css`, built by `make css` (one-shot) or `make css-watch` (rebuilds on markup changes; run alongside `make dev` since air itself doesn't watch CSS). `dev` in the Makefile runs `css` once before starting air so a fresh checkout never embeds a stale/missing CSS file; `.air.toml` also runs a one-shot Tailwind build as a `pre_cmd` on every rebuild as a safety net. `dashboard.js` reads some of the `@theme` color variables directly via `getComputedStyle` to theme the lightweight-charts instance, so those variable names must stay in sync between `input.css` and `dashboard.js`.
+
+## Claude Code workflow rules
+
+- Whenever a Plan Mode plan is approved, implement it on a new git branch (created from the up-to-date base branch) rather than directly on `master`. Name the branch descriptively for the task.
+- At the end of that implementation, push the branch and open a pull request on GitHub (via `gh pr create`) instead of merging or pushing directly to `master`. Do not merge the PR — the user reviews and merges it themselves.
+- This branch+PR flow applies to Plan Mode work specifically; small ad hoc edits or fixes made outside of a plan don't require it unless the user says otherwise.

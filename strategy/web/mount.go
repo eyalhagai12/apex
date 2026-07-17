@@ -85,5 +85,4 @@ func (h *handlers) handleDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.svc.Delete(r.Context(), id)
-
 }
