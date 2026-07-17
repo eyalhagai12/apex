@@ -1,0 +1,28 @@
+version: "2"
+sql:
+  - engine: "postgresql"
+    schema: "migrations"
+    queries: "marketdata/internal/storage/queries"
+    database:
+      uri: "postgres://apex:apex@localhost:5432/apex?sslmode=disable"
+    gen:
+      go:
+        package: "sqlcgen"
+        out: "marketdata/internal/storage/sqlcgen"
+        sql_package: "database/sql"
+        overrides:
+          - db_type: "pg_catalog.interval"
+            go_type: "string"
+  - engine: "postgresql"
+    schema: "migrations"
+    queries: "strategy/internal/storage/queries"
+    database:
+      uri: "postgres://apex:apex@localhost:5432/apex?sslmode=disable"
+    gen:
+      go:
+        package: "sqlcgen"
+        out: "strategy/internal/storage/sqlcgen"
+        sql_package: "database/sql"
+        overrides:
+          - db_type: "uuid"
+            go_type: "github.com/google/uuid.UUID"

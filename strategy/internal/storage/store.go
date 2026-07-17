@@ -2,6 +2,7 @@ package storage
 
 import (
 	"apex/internal/domain"
+	"apex/strategy/internal/storage/sqlcgen"
 	"context"
 	"database/sql"
 
@@ -9,50 +10,56 @@ import (
 )
 
 type Store struct {
-	db *sql.DB
+	queries *sqlcgen.Queries
 }
 
 func NewStore(db *sql.DB) *Store {
-	return &Store{db: db}
+	return &Store{queries: sqlcgen.New(db)}
 }
 
 func (s *Store) Save(ctx context.Context, strategy *domain.Strategy) error {
-	query := `INSERT INTO strategies (id, name, status, version, identifier) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, status = EXCLUDED.status, version = EXCLUDED.version, identifier = EXCLUDED.identifier`
-	_, err := s.db.ExecContext(ctx, query, strategy.ID, strategy.Name, strategy.Status, strategy.Version, strategy.Identifier)
-	return err
+	return s.queries.UpsertStrategy(ctx, sqlcgen.UpsertStrategyParams{
+		ID:         strategy.ID,
+		Name:       strategy.Name,
+		Status:     string(strategy.Status),
+		Version:    int64(strategy.Version),
+		Identifier: strategy.Identifier,
+	})
 }
 
 func (s *Store) Get(ctx context.Context, id uuid.UUID) (*domain.Strategy, error) {
-	query := `SELECT id, name, status, version, identifier FROM strategies WHERE id = $1`
-	row := s.db.QueryRowContext(ctx, query, id)
-	var strategy domain.Strategy
-	if err := row.Scan(&strategy.ID, &strategy.Name, &strategy.Status, &strategy.Version, &strategy.Identifier); err != nil {
-		return nil, err
-	}
-	return &strategy, nil
-}
-
-func (s *Store) Delete(ctx context.Context, id uuid.UUID) error {
-	query := `DELETE FROM strategies WHERE id = $1`
-	_, err := s.db.ExecContext(ctx, query, id)
-	return err
-}
-
-func (s *Store) List(ctx context.Context) ([]*domain.Strategy, error) {
-	query := `SELECT id, name, status, version, identifier FROM strategies ORDER BY name`
-	rows, err := s.db.QueryContext(ctx, query)
+	row, err := s.queries.GetStrategy(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	return &domain.Strategy{
+		ID:         row.ID,
+		Name:       row.Name,
+		Status:     domain.Status(row.Status),
+		Version:    uint64(row.Version),
+		Identifier: row.Identifier,
+	}, nil
+}
 
-	strategies := make([]*domain.Strategy, 0)
-	for rows.Next() {
-		var strategy domain.Strategy
-		if err := rows.Scan(&strategy.ID, &strategy.Name, &strategy.Status, &strategy.Version, &strategy.Identifier); err != nil {
-			return nil, err
-		}
-		strategies = append(strategies, &strategy)
+func (s *Store) Delete(ctx context.Context, id uuid.UUID) error {
+	return s.queries.DeleteStrategy(ctx, id)
+}
+
+func (s *Store) List(ctx context.Context) ([]*domain.Strategy, error) {
+	rows, err := s.queries.ListStrategies(ctx)
+	if err != nil {
+		return nil, err
 	}
-	return strategies, rows.Err()
+
+	strategies := make([]*domain.Strategy, len(rows))
+	for i, row := range rows {
+		strategies[i] = &domain.Strategy{
+			ID:         row.ID,
+			Name:       row.Name,
+			Status:     domain.Status(row.Status),
+			Version:    uint64(row.Version),
+			Identifier: row.Identifier,
+		}
+	}
+	return strategies, nil
 }
